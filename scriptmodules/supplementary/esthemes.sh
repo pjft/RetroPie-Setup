@@ -97,6 +97,18 @@ function gui_esthemes() {
             options+=("$i" "Download Theme Gallery")
         fi
         ((i++))
+        local randomenabled=0
+        [[ -n "$(find "/etc/rcS.d" -type l -name "S*aesthemes")" ]] && randomenabled=1
+        status+=("i")
+        if [[ "$randomenabled" -eq 1 ]]; then
+            options+=("$i" "Randomize themes from /etc/esthemes.list to random-theme (Enabled)")
+        else
+            options+=("$i" "Randomize themes from /etc/esthemes.list to random-theme (Disabled)")
+        fi
+        ((i++))
+        status+=("i")
+        options+=("$i" "Manually Edit /etc/esthemes.list")
+        ((i++))
         for theme in "${themes[@]}"; do
             theme=($theme)
             theme="${theme[1]}"
@@ -111,7 +123,7 @@ function gui_esthemes() {
         done
         local cmd=(dialog --backtitle "$__backtitle" --menu "Choose an option" 22 76 16)
         local choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
-        if [[ -n "$choice" && $choice > 1 ]]; then
+        if [[ -n "$choice" && $choice > 3 ]]; then
             theme=(${themes[choice-2]})
             repo="${theme[0]}"
             theme="${theme[1]}"
@@ -130,6 +142,17 @@ function gui_esthemes() {
             else
                 rp_callModule esthemes install_theme "$theme" "$repo"
             fi
+        elif [[ -n "$choice" && $choice == 2 ]]; then
+            if [[ "$randomenabled" -eq 1 ]]; then
+                randomenabled=0
+                rm "/etc/init.d/aesthemes"
+                chmod +x /etc/init.d/aesthemes
+            else
+                randomenabled=1
+                cp "$md_data/aesthemes" "/etc/init.d/"
+            fi
+        elif [[ -n "$choice" && $choice == 3 ]]; then
+            editFile /etc/esthemes.list
         elif [[ -n "$choice" && $choice == 1 ]]; then
             if [[ "${status[0]}" == "i" ]]; then
                 options=(1 "View Theme Gallery" 2 "Update Theme Gallery" 3 "Remove Theme Gallery")

@@ -1,0 +1,27 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          aesthemes
+# Required-Start:    mountdevsubfs
+# Required-Stop:
+# Default-Start:     S
+# X-Start-Before:    checkroot
+# Default-Stop:
+# Short-Description: Randomize theme folders
+# Description:       Create symlink to random theme folder
+### END INIT INFO
+
+ROOTDIR=""
+DATADIR=""
+REGEX_VIDEO=""
+REGEX_IMAGE=""
+
+do_start () {
+    local config="/etc/esthemes.list"
+    local randomfolder="/etc/emulationstation/themes/random-theme"
+    local line
+    line="$(cat "$config" | shuf -n1)"
+    sudo rm randomfolder
+    sudo ln -s "$line" randomfolder
+    exit 0
+}
