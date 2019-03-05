@@ -21,15 +21,32 @@ function module_builder() {
     local ids=($@)
 
     local id
-    local mode
     for id in "${ids[@]}"; do
-        [[ "$id" =~ ^[0-9]+$ ]] && id="$(rp_getIdFromIdx $id)"
-        ! fnExists "install_$id" && continue
+        # if index get mod_id from array else we look it up
+        local md_id
+        local md_idx
+        if [[ "$id" =~ ^[0-9]+$ ]]; then
+            md_id="$(rp_getIdFromIdx $id)"
+            md_idx="$id"
+        else
+            md_idx="$(rp_getIdxFromId $id)"
+            md_id="$id"
+        fi
+
+        # don't build binaries for modules with flag nobin
+        # eg scraper which fails as go1.8 doesn't work under qemu
+        hasFlag "${__mod_flags[$md_idx]}" "nobin" && continue
+
+        ! fnExists "install_${md_id}" && continue
+
+        # skip already built archives, so we can retry failed modules
+        [[ -f "$__tmpdir/archives/$__os_codename/$__platform/${__mod_type[md_idx]}/$md_id.tar.gz" ]] && continue
 
         # build, install and create binary archive.
         # initial clean in case anything was in the build folder when calling
+        local mode
         for mode in clean remove depends sources build install create_bin clean remove "depends remove"; do
-            rp_callModule "$id" $mode
+            rp_callModule "$md_id" $mode
             # return on error
             [[ $? -eq 1 ]] && return 1
             # no module found - skip to next module
@@ -49,4 +66,52 @@ function upload_builder() {
 
 function clean_archives_builder() {
     rm -rfv "$__tmpdir/archives"
+}
+
+function chroot_build_builder() {
+    rp_callModule image depends
+    mkdir -p "$md_build"
+
+    # get current host ip for the distcc in the emulated chroot to connect to
+    local ip="$(ip route get 8.8.8.8 2>/dev/null | awk '{print $NF; exit}')"
+
+    local dist
+    local sys
+
+    for dist in stretch; do
+        local use_distcc=0
+        if [[ -d "$rootdir/admin/crosscomp/$dist" ]]; then
+            use_distcc=1
+            rp_callModule crosscomp switch_distcc "$dist"
+        fi
+
+        if [[ ! -d "$md_build/$dist" ]]; then
+            rp_callModule image create_chroot "$dist" "$md_build/$dist"
+            git clone "$HOME/RetroPie-Setup" "$md_build/$dist/home/pi/RetroPie-Setup"
+            cat > "$md_build/$dist/home/pi/install.sh" <<_EOF_
+#!/bin/bash
+cd
+sudo apt-get update
+sudo apt-get install -y git
+if [[ "$use_distcc" -eq 1 ]]; then
+    sudo apt-get install -y distcc
+    sudo sed -i s/\+zeroconf/$ip/ /etc/distcc/hosts;
+fi
+_EOF_
+            rp_callModule image chroot "$md_build/$dist" bash /home/pi/install.sh
+        else
+            git -C "$md_build/$dist/home/pi/RetroPie-Setup" pull
+        fi
+
+        for sys in rpi1 rpi2; do
+            rp_callModule image chroot "$md_build/$dist" \
+                sudo \
+                PATH="/usr/lib/distcc:$PATH" \
+                MAKEFLAGS="-j4 PATH=/usr/lib/distcc:$PATH" \
+                __platform="$sys" \
+                /home/pi/RetroPie-Setup/retropie_packages.sh builder "$@"
+        done
+
+        rsync -av "$md_build/$dist/home/pi/RetroPie-Setup/tmp/archives/" "$HOME/RetroPie-Setup/tmp/archives/"
+    done
 }

@@ -67,7 +67,7 @@ function depends_mehstation() {
         cmake automake libfreeimage-dev libopenal-dev libpango1.0-dev
         libsndfile1-dev libudev-dev libasound2-dev libjpeg-dev
         libtiff5-dev libwebp-dev libsqlite3-dev libavutil-dev libavcodec-dev
-        libavformat-dev git libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev
+        libavformat-dev libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev
         libsdl2-image-dev sqlite3 golang
     )
     getDepends "${depends[@]}"
@@ -102,7 +102,6 @@ function install_mehstation() {
 
 function configure_mehstation() {
     # move / symlink the configuration
-    mkUserDir "$home/.config"
     moveConfigDir "$home/.config/mehstation" "$md_conf_root/all/mehstation"
 
     local db="$md_conf_root/all/mehstation/database.db"

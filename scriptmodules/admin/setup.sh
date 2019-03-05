@@ -13,6 +13,10 @@ rp_module_id="setup"
 rp_module_desc="GUI based setup for RetroPie"
 rp_module_section=""
 
+function _setup_gzip_log() {
+    setsid tee >(setsid gzip --stdout >"$1")
+}
+
 function rps_logInit() {
     if [[ ! -d "$__logdir" ]]; then
         if mkdir -p "$__logdir"; then
@@ -29,7 +33,9 @@ function rps_logInit() {
 }
 
 function rps_logStart() {
-    echo "Log started at: $(date -d @$time_start)"
+    echo -e "Log started at: $(date -d @$time_start)\n"
+    echo "RetroPie-Setup version: $__version ($(git -C "$scriptdir" log -1 --pretty=format:%h))"
+    echo "System: $(uname -a)"
 }
 
 function rps_logEnd() {
@@ -61,8 +67,24 @@ function depends_setup() {
         joy2keyStop
         exec "$scriptdir/retropie_packages.sh" setup post_update gui_setup
     fi
-    if isPlatform "rpi" && [[ -f /boot/config.txt ]] && grep -q "^dtoverlay=vc4-kms-v3d" /boot/config.txt; then
-        printMsgs "dialog" "You have the experimental desktop GL driver enabled. This is NOT compatible with RetroPie, and Emulation Station as well as emulators will fail to launch. Please disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
+
+    if isPlatform "rpi" && isPlatform "mesa"; then
+        printMsgs "dialog" "ERROR: You have the experimental desktop GL driver enabled. This is NOT compatible with RetroPie, and Emulation Station as well as emulators will fail to launch.\n\nPlease disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
+        exit 1
+    fi
+
+    if isPlatform "rpi" && [[ "$__os_debian_ver" -eq 8 ]]; then
+        printMsgs "dialog" "Raspbian Jessie is no longer supported by the Raspberry Pi Foundation and compatibility with RetroPie-Setup will be dropped in the near future.\n\nBinary packages for RetroPie will also not be updated further.\n\nPlease install RetroPie 4.4 or newer from a fresh image which is based on Raspbian Stretch.\n\nIt is possible to upgrade a Jessie install to Stretch but we recommend a fresh install.\n\n"
+    fi
+
+    # make sure user has the correct group permissions
+    if ! isPlatform "x11"; then
+        local group
+        for group in input video; do
+            if ! hasFlag "$(groups $user)" "$group"; then
+                dialog --yesno "Your user '$user' is not a member of the system group '$group'.\n\nThis is needed for RetroPie to function correctly. May I add '$user' to group '$group'?\n\nYou will need to restart for these changes to take effect." 22 76 2>&1 >/dev/tty && usermod -a -G "$group" "$user"
+            fi
+        done
     fi
 
     # remove all but the last 20 logs
@@ -95,6 +117,8 @@ function updatescript_setup()
 function post_update_setup() {
     local return_func=("$@")
 
+    joy2keyStart
+
     echo "$__version" >"$rootdir/VERSION"
 
     clear
@@ -108,7 +132,7 @@ function post_update_setup() {
         printHeading "Running post update hooks"
         rp_updateHooks
         rps_logEnd
-    } &> >(tee >(gzip --stdout >"$logfilename"))
+    } &> >(_setup_gzip_log "$logfilename")
     rps_printInfo "$logfilename"
 
     printMsgs "dialog" "NOTICE: The RetroPie-Setup script and pre-made RetroPie SD card images are available to download for free from https://retropie.org.uk.\n\nThe pre-built RetroPie image includes software that has non commercial licences. Selling RetroPie images or including RetroPie with your commercial product is not allowed.\n\nNo copyrighted games are included with RetroPie.\n\nIf you have been sold this software, you can let us know about it by emailing retropieproject@gmail.com."
@@ -173,7 +197,7 @@ function package_setup() {
                     rps_logStart
                     rp_installModule "$idx"
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             S)
@@ -184,7 +208,7 @@ function package_setup() {
                     rp_callModule "$idx" clean
                     rp_callModule "$idx"
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             C)
@@ -193,7 +217,7 @@ function package_setup() {
                     rps_logStart
                     rp_callModule "$idx" gui
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             X)
@@ -205,7 +229,7 @@ function package_setup() {
                     rps_logStart
                     rp_callModule "$idx" remove
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             H)
@@ -280,7 +304,7 @@ function section_gui_setup() {
                         rp_installModule "$idx"
                     done
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             S)
@@ -293,7 +317,7 @@ function section_gui_setup() {
                         rp_callModule "$idx"
                     done
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
 
@@ -308,7 +332,7 @@ function section_gui_setup() {
                         rp_isInstalled "$idx" && rp_callModule "$idx" remove
                     done
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             *)
@@ -361,7 +385,7 @@ function config_gui_setup() {
                 rp_callModule "$choice"
             fi
             rps_logEnd
-        } &> >(tee >(gzip --stdout >"$logfilename"))
+        } &> >(_setup_gzip_log "$logfilename")
         rps_printInfo "$logfilename"
     done
 }
@@ -400,7 +424,7 @@ function update_packages_gui_setup() {
         [[ "$update_os" -eq 1 ]] && apt_upgrade_raspbiantools
         update_packages_setup
         rps_logEnd
-    } &> >(tee >(gzip --stdout >"$logfilename"))
+    } &> >(_setup_gzip_log "$logfilename")
 
     rps_printInfo "$logfilename"
     printMsgs "dialog" "Installed packages have been updated."
@@ -472,17 +496,16 @@ function reboot_setup()
 # retropie-setup main menu
 function gui_setup() {
     depends_setup
+    joy2keyStart
     local default
     while true; do
-        pushd "$scriptdir" >/dev/null
-        local commit=$(git log -1 --pretty=format:"%cr (%h)")
-        popd >/dev/null
+        local commit=$(git -C "$scriptdir" log -1 --pretty=format:"%cr (%h)")
 
         cmd=(dialog --backtitle "$__backtitle" --title "RetroPie-Setup Script" --cancel-label "Exit" --item-help --help-button --default-item "$default" --menu "Version: $__version\nLast Commit: $commit" 22 76 16)
         options=(
             I "Basic install" "I This will install all packages from Core and Main which gives a basic RetroPie install. Further packages can then be installed later from the Optional and Experimental sections. If binaries are available they will be used, alternatively packages will be built from source - which will take longer."
 
-            U "Update all installed packages" "U Update all currently installed packages. If binaries are available they will be used, alternatively packages will be built from source - which will take longer."
+            U "Update" "U Updates RetroPie-Setup and all currently installed packages. Will also allow to update OS packages. If binaries are available they will be used, otherwise packages will be built from source."
 
             P "Manage packages"
             "P Install/Remove and Configure the various components of RetroPie, including emulators, ports, and controller drivers."
@@ -524,7 +547,7 @@ function gui_setup() {
                     rps_logStart
                     basic_install_setup
                     rps_logEnd
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             U)
@@ -550,14 +573,15 @@ function gui_setup() {
                 rps_logInit
                 {
                     uninstall_setup
-                } &> >(tee >(gzip --stdout >"$logfilename"))
+                } &> >(_setup_gzip_log "$logfilename")
                 rps_printInfo "$logfilename"
                 ;;
             R)
-                dialog --defaultno --yesno "Are you sure you want to reboot?" 22 76 2>&1 >/dev/tty || continue
+                dialog --defaultno --yesno "Are you sure you want to reboot?\n\nNote that if you reboot when Emulation Station is running, you will lose any metadata changes." 22 76 2>&1 >/dev/tty || continue
                 reboot_setup
                 ;;
         esac
     done
+    joy2keyStop
     clear
 }

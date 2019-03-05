@@ -17,25 +17,15 @@ rp_module_section="opt"
 rp_module_flags="dispmanx !mali"
 
 function depends_fuse() {
-    getDepends libsdl1.2-dev libpng12-dev zlib1g-dev libbz2-dev libaudiofile-dev bison flex
+    getDepends libsdl1.2-dev libpng-dev zlib1g-dev libbz2-dev libaudiofile-dev bison flex
 }
 
 function sources_fuse() {
-    wget -O- -q $__archive_url/fuse-1.3.4.tar.gz | tar -xvz --strip-components=1
+    downloadAndExtract "$__archive_url/fuse-1.4.1.tar.gz" "$md_build" --strip-components 1
     mkdir libspectrum
-    wget -O- -q $__archive_url/libspectrum-1.3.2.tar.gz | tar -xvz --strip-components=1 -C libspectrum
+    downloadAndExtract "$__archive_url/libspectrum-1.4.1.tar.gz" "$md_build/libspectrum" --strip-components 1
     if ! isPlatform "x11"; then
-        applyPatch cursor.diff <<\_EOF_
---- a/ui/sdl/sdldisplay.c	2015-02-18 22:39:05.631516602 +0000
-+++ b/ui/sdl/sdldisplay.c	2015-02-18 22:39:08.407506296 +0000
-@@ -411,7 +411,7 @@
-     SDL_ShowCursor( SDL_DISABLE );
-     SDL_WarpMouse( 128, 128 );
-   } else {
--    SDL_ShowCursor( SDL_ENABLE );
-+    SDL_ShowCursor( SDL_DISABLE );
-   }
-_EOF_
+        applyPatch "$md_data/01_disable_cursor.diff"
     fi
 }
 
@@ -45,7 +35,7 @@ function build_fuse() {
     make clean
     make
     popd
-    CFLAGS+=" -I$md_build/libspectrum" LDFLAGS+=" -L$md_build/libspectrum/.libs" ./configure --prefix="$md_inst" --without-libao --without-gpm --without-gtk --without-libxml2 --with-sdl
+    ./configure --prefix="$md_inst" --without-libao --without-gpm --without-gtk --without-libxml2 --with-sdl LIBSPECTRUM_CFLAGS="-I$md_build/libspectrum" LIBSPECTRUM_LIBS="-L$md_build/libspectrum/.libs -lspectrum"
     make clean
     make
     md_ret_require="$md_build/fuse"

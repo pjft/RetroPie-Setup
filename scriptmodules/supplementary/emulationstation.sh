@@ -123,10 +123,9 @@ function _add_rom_emulationstation() {
 
 function depends_emulationstation() {
     local depends=(
-        libboost-locale-dev libboost-system-dev libboost-filesystem-dev
-        libboost-date-time-dev libfreeimage-dev libfreetype6-dev libeigen3-dev
+        libfreeimage-dev libfreetype6-dev
         libcurl4-openssl-dev libasound2-dev cmake libsdl2-dev libsm-dev
-        libvlc-dev libvlccore-dev vlc-nox
+        libvlc-dev libvlccore-dev vlc rapidjson-dev
     )
 
     isPlatform "x11" && depends+=(gnome-terminal)
@@ -136,13 +135,13 @@ function depends_emulationstation() {
 function sources_emulationstation() {
     local repo="$1"
     local branch="$2"
-    [[ -z "$repo" ]] && repo="https://github.com/retropie/EmulationStation"
-    [[ -z "$branch" ]] && branch="master"
+    [[ -z "$repo" ]] && repo="https://github.com/RetroPie/EmulationStation"
+    [[ -z "$branch" ]] && branch="stable"
     gitPullOrClone "$md_build" "$repo" "$branch"
 }
 
 function build_emulationstation() {
-    rpSwap on 512
+    rpSwap on 1000
     cmake . -DFREETYPE_INCLUDE_DIRS=/usr/include/freetype2/
     make clean
     make
@@ -157,6 +156,7 @@ function install_emulationstation() {
         'emulationstation.sh'
         'GAMELISTS.md'
         'README.md'
+        'resources'
         'THEMES.md'
     )
 }
@@ -169,13 +169,17 @@ function init_input_emulationstation() {
         echo "<inputList />" >"$es_config"
     fi
 
-    # add our inputconfiguration.sh inputAction if it is missing
+    # add/update our inputconfiguration.sh inputAction
     if [[ $(xmlstarlet sel -t -v "count(/inputList/inputAction[@type='onfinish'])" "$es_config") -eq 0 ]]; then
         xmlstarlet ed -L -S \
             -s "/inputList" -t elem -n "inputActionTMP" -v "" \
             -s "//inputActionTMP" -t attr -n "type" -v "onfinish" \
             -s "//inputActionTMP" -t elem -n "command" -v "$md_inst/scripts/inputconfiguration.sh" \
             -r "//inputActionTMP" -v "inputAction" "$es_config"
+    else
+        xmlstarlet ed -L \
+            -u "/inputList/inputAction[@type='onfinish']/command" -v "$md_inst/scripts/inputconfiguration.sh" \
+            "$es_config"
     fi
 
     chown $user:$user "$es_config"
@@ -197,6 +201,11 @@ if [[ \$(id -u) -eq 0 ]]; then
     exit 1
 fi
 
+if [[ -d "/sys/module/vc4" ]]; then
+    echo -e "ERROR: You have the experimental desktop GL driver enabled. This is NOT compatible with RetroPie, and Emulation Station as well as emulators will fail to launch.\\n\\nPlease disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
+    exit 1
+fi
+
 if [[ "\$(uname --machine)" != *86* ]]; then
     if [[ -n "\$(pidof X)" ]]; then
         echo "X is running. Please shut down X in order to mitigate problems with losing keyboard input. For example, logout from LXDE."
@@ -211,7 +220,7 @@ export TTY="\${tty:8:1}"
 clear
 tput civis
 "$md_inst/emulationstation.sh" "\$@"
-if [[ $? -eq 139 ]]; then
+if [[ \$? -eq 139 ]]; then
     dialog --cr-wrap --no-collapse --msgbox "Emulation Station crashed!\n\nIf this is your first boot of RetroPie - make sure you are using the correct image for your system.\n\\nCheck your rom file/folder permissions and if running on a Raspberry Pi, make sure your gpu_split is set high enough and/or switch back to using carbon theme.\n\nFor more help please use the RetroPie forum." 20 60 >/dev/tty
 fi
 tput cnorm
@@ -220,7 +229,7 @@ _EOF_
 
     if isPlatform "x11"; then
         mkdir -p /usr/local/share/{icons,applications}
-        cp "$md_data/retropie.svg" "/usr/local/share/icons/"
+        cp "$scriptdir/scriptmodules/$md_type/emulationstation/retropie.svg" "/usr/local/share/icons/"
         cat > /usr/local/share/applications/retropie.desktop << _EOF_
 [Desktop Entry]
 Type=Application
@@ -244,7 +253,7 @@ function clear_input_emulationstation() {
 }
 
 function remove_emulationstation() {
-    rm -rfv "/etc/emulationstation" "/usr/bin/emulationstation" "$configdir/all/emulationstation/"*.cfg "$configdir/all/emulationstation/"*.txt
+    rm -f "/usr/bin/emulationstation"
     if isPlatform "x11"; then
         rm -rfv "/usr/local/share/icons/retropie.svg" "/usr/local/share/applications/retropie.desktop"
     fi
@@ -256,20 +265,19 @@ function configure_emulationstation() {
 
     [[ "$mode" == "remove" ]] && return
 
+    # remove other emulation station if it's installed, so we don't end up with
+    # both packages interfering - but leave configs alone so switching is easy
+    if [[ "$md_id" == "emulationstation-dev" ]]; then
+        rmDirExists "$rootdir/$md_type/emulationstation"
+    else
+        rmDirExists "$rootdir/$md_type/emulationstation-dev"
+    fi
+
     init_input_emulationstation
 
     copy_inputscripts_emulationstation
 
     install_launch_emulationstation
-
-    if isPlatform "rpi"; then
-        # make sure that ES has enough GPU memory
-        iniConfig "=" "" /boot/config.txt
-        iniSet "gpu_mem_256" 128
-        iniSet "gpu_mem_512" 256
-        iniSet "gpu_mem_1024" 256
-        iniSet "overscan_scale" 1
-    fi
 
     mkdir -p "/etc/emulationstation"
 
@@ -325,6 +333,9 @@ function gui_emulationstation() {
             3)
                 es_swap="$((es_swap ^ 1))"
                 setAutoConf "es_swap_a_b" "$es_swap"
+                local ra_swap="false"
+                getAutoConf "es_swap_a_b" && ra_swap="true"
+                iniSet "menu_swap_ok_cancel_buttons" "$ra_swap" "$configdir/all/retroarch.cfg"
                 printMsgs "dialog" "You will need to reconfigure you controller in Emulation Station for the changes to take effect."
                 ;;
         esac

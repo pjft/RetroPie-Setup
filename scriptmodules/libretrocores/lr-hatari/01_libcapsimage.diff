@@ -1,18 +1,5 @@
-diff --git a/Makefile.libretro b/Makefile.libretro
-index ce9ec18..ed515d7 100755
---- a/Makefile.libretro
-+++ b/Makefile.libretro
-@@ -132,7 +132,7 @@ $(TARGET): $(OBJECTS)
- 	$(CC) $(fpic) $(SHARED) $(INCLUDES) -o $@ $(OBJECTS)  -lm -lz
- else
- $(TARGET): $(OBJECTS)
--	$(CC) $(fpic) $(SHARED) $(INCLUDES) -o $@ $(OBJECTS)  -lm -lz -lpthread
-+	$(CC) $(fpic) $(SHARED) $(INCLUDES) -o $@ $(OBJECTS)  -lm -lz -lpthread lib/libcapsimage.so.5.1
- 
- endif
- 
 diff --git a/src/floppy_ipf.c b/src/floppy_ipf.c
-index 09a91d8..64998e0 100644
+index c615b75..5e089ee 100644
 --- a/src/floppy_ipf.c
 +++ b/src/floppy_ipf.c
 @@ -24,6 +24,8 @@ const char floppy_ipf_fileid[] = "Hatari floppy_ipf.c : " __DATE__ " " __TIME__;

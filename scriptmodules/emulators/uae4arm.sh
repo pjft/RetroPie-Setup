@@ -14,10 +14,10 @@ rp_module_desc="Amiga emulator with JIT support"
 rp_module_help="ROM Extension: .adf\n\nCopy your Amiga games to $romdir/amiga\n\nCopy the required BIOS files\nkick13.rom\nkick20.rom\nkick31.rom\nto $biosdir"
 rp_module_licence="GPL2"
 rp_module_section="opt"
-rp_module_flags="!x86 !mali"
+rp_module_flags="!x86 !mali !kms"
 
 function depends_uae4arm() {
-    getDepends libsdl1.2-dev libsdl-gfx1.2-dev libsdl-ttf2.0-dev libguichan-dev libmpg123-dev libxml2-dev libflac-dev
+    getDepends libsdl1.2-dev libsdl-gfx1.2-dev libsdl-ttf2.0-dev libguichan-dev libmpg123-dev libxml2-dev libflac-dev "${@}"
 }
 
 function sources_uae4arm() {
@@ -89,12 +89,15 @@ function configure_uae4arm() {
 
     local script="+Start UAE4Arm.sh"
     [[ "$md_id" == "amiberry" ]] && script="+Start Amiberry.sh"
-    cat > "$romdir/amiga/$script" << _EOF_
+    rm -f "$romdir/amiga/$script"
+    if [[ "$md_mode" == "install" ]]; then
+        cat > "$romdir/amiga/$script" << _EOF_
 #!/bin/bash
 "$md_inst/$md_id.sh"
 _EOF_
-    chmod a+x "$romdir/amiga/$script"
-    chown $user:$user "$romdir/amiga/$script"
+        chmod a+x "$romdir/amiga/$script"
+        chown $user:$user "$romdir/amiga/$script"
+    fi
 
     addEmulator 1 "$md_id" "amiga" "$md_inst/$md_id.sh auto %ROM%"
     addEmulator 1 "$md_id-a500" "amiga" "$md_inst/$md_id.sh rp-a500.uae %ROM%"

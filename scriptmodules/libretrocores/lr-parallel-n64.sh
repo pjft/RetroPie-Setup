@@ -15,18 +15,33 @@ rp_module_help="ROM Extensions: .z64 .n64 .v64\n\nCopy your N64 roms to $romdir/
 rp_module_licence="GPL2 https://raw.githubusercontent.com/libretro/parallel-n64/master/mupen64plus-core/LICENSES"
 rp_module_section="opt"
 
+function depends_lr-parallel-n64() {
+    local depends=()
+    isPlatform "x11" && depends+=(libgl1-mesa-dev)
+    isPlatform "rpi" && depends+=(libraspberrypi-dev)
+    getDepends "${depends[@]}"
+}
+
 function sources_lr-parallel-n64() {
-    gitPullOrClone "$md_build" https://github.com/libretro/parallel-n64.git
+    local branch"master"
+    local commit=""
+    # build from ab155da1 due to https://github.com/libretro/parallel-n64/issues/544
+    isPlatform "arm" && commit="ab155da1"
+    gitPullOrClone "$md_build" https://github.com/libretro/parallel-n64.git "$branch" "$commit"
 }
 
 function build_lr-parallel-n64() {
-    rpSwap on 750
+    rpSwap on 1000
     make clean
+    local params=()
     if isPlatform "rpi" || isPlatform "odroid-c1"; then
-        make platform="$__platform"
-    else
-        make
+        params+=(platform="$__platform")
+    elif isPlatform "tinker"; then
+        params+=(CPUFLAGS="-DNO_ASM -DARM -D__arm__ -DARM_ASM -D__NEON_OPT -DNOSSE")
+        params+=(GLES=1 HAVE_NEON=1 WITH_DYNAREC=arm)
+        params+=(GL_LIB:=-lGLESv2)
     fi
+    make "${params[@]}"
     rpSwap off
     md_ret_require="$md_build/parallel_n64_libretro.so"
 }
@@ -43,9 +58,9 @@ function configure_lr-parallel-n64() {
     ensureSystemretroconfig "n64"
 
     # Set core options
-    setRetroArchCoreOption "mupen64-gfxplugin" "rice"
-    setRetroArchCoreOption "mupen64-gfxplugin-accuracy" "low"
-    setRetroArchCoreOption "mupen64-screensize" "640x480"
+    setRetroArchCoreOption "parallel-n64-gfxplugin" "auto"
+    setRetroArchCoreOption "parallel-n64-gfxplugin-accuracy" "low"
+    setRetroArchCoreOption "parallel-n64-screensize" "640x480"
 
     # Copy config files
     cat > $home/RetroPie/BIOS/gles2n64rom.conf << _EOF_

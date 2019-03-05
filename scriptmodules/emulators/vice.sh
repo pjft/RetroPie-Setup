@@ -17,7 +17,7 @@ rp_module_section="opt"
 rp_module_flags=""
 
 function depends_vice() {
-    local depends=(libsdl2-dev libmpg123-dev libpng12-dev zlib1g-dev libasound2-dev libvorbis-dev libflac-dev libpcap-dev automake checkinstall bison flex subversion libjpeg-dev portaudio19-dev)
+    local depends=(libsdl2-dev libmpg123-dev libpng-dev zlib1g-dev libasound2-dev libvorbis-dev libflac-dev libpcap-dev automake checkinstall bison flex subversion libjpeg-dev portaudio19-dev texinfo xa65)
     isPlatform "x11" && depends+=(libpulse-dev)
     getDepends "${depends[@]}"
 }
@@ -27,7 +27,7 @@ function sources_vice() {
 }
 
 function build_vice() {
-    local params=(--enable-sdlui2 --without-arts --without-oss --enable-ethernet)
+    local params=(--enable-sdlui2 --without-oss --enable-ethernet)
     ! isPlatform "x11" && params+=(--disable-catweasel --without-pulse)
     ./autogen.sh
     ./configure --prefix="$md_inst" "${params[@]}"
@@ -50,6 +50,7 @@ function configure_vice() {
 
 BIN="\${0%/*}/\$1"
 ROM="\$2"
+PARAMS=("\${@:3}")
 
 romdir="\${ROM%/*}"
 ext="\${ROM##*.}"
@@ -63,7 +64,7 @@ if [[ \$? == 0 ]]; then
     romdir="\$arch_dir"
 fi
 
-"\$BIN" -chdir "\$romdir" "\$ROM"
+"\$BIN" -chdir "\$romdir" "\${PARAMS[@]}" "\$ROM"
 archiveCleanup
 _EOF_
 
@@ -77,13 +78,14 @@ _EOF_
     addEmulator 0 "$md_id-xpet" "c64" "$md_inst/bin/vice.sh xpet %ROM%"
     addEmulator 0 "$md_id-xplus4" "c64" "$md_inst/bin/vice.sh xplus4 %ROM%"
     addEmulator 0 "$md_id-xvic" "c64" "$md_inst/bin/vice.sh xvic %ROM%"
-    addEmulator 0 "$md_id-xvic-cart" "c64" "$md_inst/bin/vice.sh 'xvic -cartgeneric' %ROM%"
+    addEmulator 0 "$md_id-xvic-cart" "c64" "$md_inst/bin/vice.sh xvic %ROM% -cartgeneric"
     addSystem "c64"
 
     [[ "$md_mode" == "remove" ]] && return
 
-    # copy any existing configs from ~/.vice and symlink the config folder to $md_conf_root/c64/
+    # copy configs and symlink the old and new config folders to $md_conf_root/c64/
     moveConfigDir "$home/.vice" "$md_conf_root/c64"
+    moveConfigDir "$home/.config/vice" "$md_conf_root/c64"
 
     local config="$(mktemp)"
     echo "[C64]" > "$config"

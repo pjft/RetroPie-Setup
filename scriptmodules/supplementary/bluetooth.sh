@@ -46,33 +46,55 @@ function get_script_bluetooth() {
     echo "$name"
 }
 
+function _slowecho_bluetooth() {
+    local line
+
+    IFS=$'\n'
+    for line in $(echo -e "${1}"); do
+        echo -e "$line"
+        sleep 1
+    done
+    unset IFS
+}
+
+function bluez_cmd_bluetooth() {
+    # create a named pipe & fd for input for bluetoothctl
+    local fifo="$(mktemp -u)"
+    mkfifo "$fifo"
+    exec 3<>"$fifo"
+    local line
+    while true; do
+        _slowecho_bluetooth "$1" >&3
+        # collect output for specified amount of time, then echo it
+        while read -r line; do
+            printf '%s\n' "$line"
+            # (slow) reply to any optional challenges
+            if [[ -n "$3" && "$line" =~ $3 ]]; then
+                _slowecho_bluetooth "$4" >&3
+            fi
+        done
+        _slowecho_bluetooth "quit\n" >&3
+        break
+    # read from bluetoothctl buffered line by line
+    done < <(timeout "$2" stdbuf -oL bluetoothctl --agent=NoInputNoOutput <&3)
+    exec 3>&-
+}
+
 function list_available_bluetooth() {
     local mac_address
     local device_name
-    dialog --backtitle "$__backtitle" --infobox "\nSearching ..." 5 40 >/dev/tty
-    if hasPackage bluez 5; then
-        # create a named pipe & fd for input for bluetoothctl
-        local fifo="$(mktemp -u)"
-        mkfifo "$fifo"
-        exec 3<>"$fifo"
-        local line
-        while read -r -n12 line; do
-            if [[ "$line" == *"[bluetooth]"* ]]; then
-                echo "scan on" >&3
-                read -r line
-                sleep 10
-                break
-            fi
-        # read from bluetoothctl buffered line by line
-        done < <(stdbuf -oL bluetoothctl <&3)
-        exec 3>&-
-        rm -f "$fifo"
+    local info_text="\n\nSearching ..."
 
+    # sixaxis: add USB pairing information
+    [[ -n "$(lsmod | grep hid_sony)" ]] && info_text="Searching ...\n\nDualShock registration: while this text is visible, unplug the controller, press the PS/SHARE button, and then replug the controller."
+
+    dialog --backtitle "$__backtitle" --infobox "$info_text" 7 60 >/dev/tty
+    if hasPackage bluez 5; then
+        # sixaxis: reply to authorization challenge on USB cable connect
         while read mac_address; read device_name; do
             echo "$mac_address"
             echo "$device_name"
-        done < <(echo "devices" | bluetoothctl 2>/dev/null | grep "^Device " | cut -d" " -f2,3- | sed 's/ /\n/')
-
+        done < <(bluez_cmd_bluetooth "default-agent\nscan on" "15" "Authorize service$" "yes" >/dev/null; bluez_cmd_bluetooth "devices" "3" | grep "^Device " | cut -d" " -f2,3- | sed 's/ /\n/')
     else
         while read; read mac_address; read device_name; do
             echo "$mac_address"
@@ -87,7 +109,7 @@ function list_registered_bluetooth() {
     local device_name
     while read line; do
         mac_address="$(echo "$line" | sed 's/ /,/g' | cut -d, -f1)"
-        device_name="$(echo "$line" | sed -e 's/'"$mac_address"' //g')"
+        device_name="$(echo "$line" | sed 's/'"$mac_address"' //g')"
         echo -e "$mac_address\n$device_name"
     done < <($(get_script_bluetooth bluez-test-device) list)
 }
@@ -100,7 +122,7 @@ function display_active_and_registered_bluetooth() {
     [[ -z "$registered" ]] && registered="There are no registered devices"
 
     if [[ "$(hcitool con)" != "Connections:" ]]; then
-        active="$(hcitool con 2>&1 | sed -e 1d)"
+        active="$(hcitool con 2>&1 | sed 1d)"
     else
         active="There are no active connections"
     fi
@@ -109,14 +131,12 @@ function display_active_and_registered_bluetooth() {
 }
 
 function remove_device_bluetooth() {
-    local mac_addresses=()
+    declare -A mac_addresses=()
     local mac_address
-    local device_names=()
     local device_name
     local options=()
     while read mac_address; read device_name; do
-        mac_addresses+=("$mac_address")
-        device_names+=("$device_name")
+        mac_addresses+=(["$mac_address"]="$device_name")
         options+=("$mac_address" "$device_name")
     done < <(list_registered_bluetooth)
 
@@ -137,15 +157,13 @@ function remove_device_bluetooth() {
 }
 
 function register_bluetooth() {
-    local mac_addresses=()
+    declare -A mac_addresses=()
     local mac_address
-    local device_names=()
     local device_name
     local options=()
 
     while read mac_address; read device_name; do
-        mac_addresses+=("$mac_address")
-        device_names+=("$device_name")
+        mac_addresses+=(["$mac_address"]="$device_name")
         options+=("$mac_address" "$device_name")
     done < <(list_available_bluetooth)
 
@@ -159,6 +177,19 @@ function register_bluetooth() {
     [[ -z "$choice" ]] && return
 
     mac_address="$choice"
+    device_name="${mac_addresses[$choice]}"
+
+    if [[ "$device_name" =~ "PLAYSTATION(R)3 Controller" ]]; then
+        $(get_script_bluetooth bluez-test-device) disconnect "$mac_address" 2>&1
+        $(get_script_bluetooth bluez-test-device) trusted "$mac_address" yes 2>&1
+        local trusted=$($(get_script_bluetooth bluez-test-device) trusted "$mac_address" 2>&1)
+        if [[ "$trusted" -eq 1 ]]; then
+            printMsgs "dialog" "Successfully authenticated $device_name ($mac_address).\n\nYou can now remove the USB cable."
+        else
+            printMsgs "dialog" "Unable to authenticate $device_name ($mac_address).\n\nPlease try to register the device again, making sure to follow the on-screen steps exactly."
+        fi
+        return
+    fi
 
     local cmd=(dialog --backtitle "$__backtitle" --menu "Please choose the security mode - Try the first one, then second if that fails" 22 76 16)
     options=(
@@ -247,17 +278,13 @@ function register_bluetooth() {
 }
 
 function udev_bluetooth() {
-    local mac_addresses=()
+    declare -A mac_addresses=()
     local mac_address
-    local device_names=()
     local device_name
     local options=()
-    local i=1
     while read mac_address; read device_name; do
-        mac_addresses+=("$mac_address")
-        device_names+=("$device_name")
-        options+=("$i" "$device_name")
-        ((i++))
+        mac_addresses+=(["$mac_address"]="$device_name")
+        options+=("$mac_address" "$device_name")
     done < <(list_registered_bluetooth)
 
     if [[ ${#mac_addresses[@]} -eq 0 ]] ; then
@@ -266,7 +293,7 @@ function udev_bluetooth() {
         local cmd=(dialog --backtitle "$__backtitle" --menu "Please choose the bluetooth device you would like to create a udev rule for" 22 76 16)
         choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
         [[ -z "$choice" ]] && return
-        device_name="${device_names[choice-1]}"
+        device_name="${mac_addresses[$choice]}"
         local config="/etc/udev/rules.d/99-bluetooth.rules"
         if ! grep -q "$device_name" "$config"; then
             local line="SUBSYSTEM==\"input\", ATTRS{name}==\"$device_name\", MODE=\"0666\", ENV{ID_INPUT_JOYSTICK}=\"1\""
@@ -300,7 +327,7 @@ function boot_bluetooth() {
             while read mac_address; read device_name; do
                 macs+=($mac_address)
             done < <(list_registered_bluetooth)
-            local script="while true; do for mac in ${macs[@]}; do hcitool con | grep -q \"\$mac\" || echo \"connect \$mac\" | bluetoothctl >/dev/null 2>&1; sleep 10; done; done"
+            local script="while true; do for mac in ${macs[@]}; do hcitool con | grep -q \"\$mac\" || { echo \"connect \$mac\nquit\"; sleep 1; } | bluetoothctl >/dev/null 2>&1; sleep 10; done; done"
             nohup nice -n19 /bin/sh -c "$script" >/dev/null &
             ;;
     esac
@@ -377,7 +404,9 @@ function gui_bluetooth() {
 
         local choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
         if [[ -n "$choice" ]]; then
-            case $choice in
+            # temporarily restore Bluetooth stack (if needed)
+            service sixad status &>/dev/null && sixad -r
+            case "$choice" in
                 R)
                     register_bluetooth
                     ;;
@@ -402,6 +431,8 @@ function gui_bluetooth() {
                     ;;
             esac
         else
+            # restart sixad (if running)
+            service sixad status &>/dev/null && service sixad restart && printMsgs "dialog" "NOTICE: The ps3controller driver was temporarily interrupted in order to allow compatibility with standard Bluetooth peripherals. Please re-pair your Dual Shock controller to continue (or disregard this message if currently using another controller)."
             break
         fi
     done

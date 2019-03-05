@@ -113,7 +113,7 @@ function _joypad_index_configedit() {
                 # get joystick device paths
                 while read -r dev; do
                     if udevadm info --name=$dev | grep -q "ID_INPUT_JOYSTICK=1"; then
-                        paths+=("$(udevadm info --name=$dev | grep DEVPATH | cut -d= -f2)")
+                        paths+=("$(udevadm info --name=$dev --query=name)")
                     fi
                 done < <(find /dev/input -name "js*")
 
@@ -121,7 +121,7 @@ function _joypad_index_configedit() {
                     # sort by path
                     IFS=$'\n'
                     while read -r path; do
-                        devs_name+=("$(</$(dirname sys$path)/name)")
+                        devs_name+=("$(cat /sys/class/$path/device/name)")
                     done < <(sort <<<"${paths[*]}")
                     unset IFS
                 fi
@@ -169,7 +169,7 @@ function basic_configedit() {
 
     local ini_options=(
         'video_smooth true false'
-        'aspect_ratio_index _id_ 4:3 16:9 16:10 16:15 1:1 2:1 3:2 3:4 4:1 4:4 5:4 6:5 7:9 8:3 8:7 19:12 19:14 30:17 32:9 config square core custom'
+        'aspect_ratio_index _id_ 4:3 16:9 16:10 16:15 21:9 1:1 2:1 3:2 3:4 4:1 4:4 5:4 6:5 7:9 8:3 8:7 19:12 19:14 30:17 32:9 config square core custom'
         '_function_ _video_fullscreen_configedit'
         'video_shader_enable true false'
         "video_shader _file_ *.*p $rootdir/emulators/retroarch/shader"
@@ -218,20 +218,20 @@ function basic_configedit() {
 function advanced_configedit() {
     local config="$1"
 
-    local audio_opts="alsa alsa_thread sdl2"
+    local audio_opts="alsa alsathread sdl2"
     if isPlatform "x11"; then
         audio_opts+=" pulse"
     fi
 
     local ini_options=(
         'video_smooth true false'
-        'aspect_ratio_index _id_ 4:3 16:9 16:10 16:15 1:1 2:1 3:2 3:4 4:1 4:4 5:4 6:5 7:9 8:3 8:7 19:12 19:14 30:17 32:9 config square core custom'
+        'aspect_ratio_index _id_ 4:3 16:9 16:10 16:15 21:9 1:1 2:1 3:2 3:4 4:1 4:4 5:4 6:5 7:9 8:3 8:7 19:12 19:14 30:17 32:9 config square core custom'
         'video_shader_enable true false'
         "video_shader _file_ *.*p $rootdir/emulators/retroarch/shader"
         'input_overlay_enable true false'
         "input_overlay _file_ *.cfg $rootdir/emulators/retroarch/overlays"
         "audio_driver $audio_opts"
-        'video_driver gl dispmanx sdl2 vg'
+        'video_driver gl dispmanx sdl2 vg vulkan'
         'menu_driver rgui xmb'
         'video_fullscreen_x _string_'
         'video_fullscreen_y _string_'
@@ -279,7 +279,7 @@ function advanced_configedit() {
         'Video shader to use (default none)'
         'Load input overlay on startup. Other overlays can still be loaded later in runtime.'
         'Input overlay to use (default none)'
-        'Audio driver to use (default is alsa_thread)'
+        'Audio driver to use (default is alsathread)'
         'Video driver to use (default is gl)'
         'Menu driver to use'
         'Fullscreen x resolution. Resolution of 0 uses the resolution of the desktop. (defaults to 0 if unset)'
@@ -389,7 +389,7 @@ function advanced_menu_configedit() {
         local file="-"
         if [[ -n "$choice" ]]; then
             while [[ -n "$file" ]]; do
-                case $choice in
+                case "$choice" in
                     1)
                         file=$(choose_config_configedit "$configdir" ".*/retroarch.cfg")
                         advanced_configedit "$configdir/$file" 2

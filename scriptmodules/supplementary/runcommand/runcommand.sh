@@ -90,7 +90,6 @@ function get_config() {
         DISABLE_JOYSTICK="$ini_value"
         iniGet "disable_menu"
         DISABLE_MENU="$ini_value"
-        [[ "$DISABLE_MENU" -eq 1 ]] && DISABLE_JOYSTICK=1
         iniGet "image_delay"
         IMAGE_DELAY="$ini_value"
         [[ -z "$IMAGE_DELAY" ]] && IMAGE_DELAY=2
@@ -299,7 +298,7 @@ function default_mode() {
             key="${SAVE_EMU}_render"
             ;;
     esac
-    default_process "$CONFIGDIR/all/videomodes.cfg" "$mode" "$key" "$value"
+    default_process "$VIDEO_CONF" "$mode" "$key" "$value"
 }
 
 function default_emulator() {
@@ -412,6 +411,9 @@ function main_menu() {
     local cmd
     local choice
 
+    local user_menu=0
+    [[ -d "$CONFIGDIR/all/runcommand-menu" && -n "$(find "$CONFIGDIR/all/runcommand-menu" -maxdepth 1 -name "*.sh")" ]] && user_menu=1
+
     [[ -z "$ROM_BN" ]] && ROM_BN="game/rom"
     [[ -z "$SYSTEM" ]] && SYSTEM="emulator/port"
 
@@ -439,7 +441,7 @@ function main_menu() {
             [[ -n "$vid_rom" ]] && options+=(7 "Remove video mode choice for $EMULATOR + ROM")
         fi
 
-        if [[ "$COMMAND" =~ retroarch ]]; then
+        if [[ "$EMULATOR" == lr-* ]]; then
             options+=(
                 8 "Select RetroArch render res for $EMULATOR ($RENDER_RES)"
                 9 "Edit custom RetroArch config for this ROM"
@@ -457,9 +459,13 @@ function main_menu() {
 
         options+=(X "Launch")
 
-        if [[ "$COMMAND" =~ retroarch ]]; then
+        if [[ "$EMULATOR" == lr-* ]]; then
             options+=(L "Launch with verbose logging")
             options+=(Z "Launch with netplay enabled")
+        fi
+
+        if [[ "$user_menu" -eq 1 ]]; then
+            options+=(U "User Menu")
         fi
 
         options+=(Q "Exit (without launching)")
@@ -472,7 +478,7 @@ function main_menu() {
         fi
         cmd=(dialog --nocancel --menu "System: $SYSTEM\nEmulator: $EMULATOR\nVideo Mode: $temp_mode\nROM: $ROM_BN"  22 76 16 )
         choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
-        case $choice in
+        case "$choice" in
             1)
                 choose_emulator "emu_sys" "$emu_sys"
                 ;;
@@ -534,6 +540,12 @@ function main_menu() {
                 COMMAND+=" --verbose"
                 return 0
                 ;;
+            U)
+                user_menu
+                local ret="$?"
+                [[ "$ret" -eq 1 ]] && return 1
+                [[ "$ret" -eq 2 ]] && return 0
+                ;;
             Q)
                 return 1
                 ;;
@@ -562,6 +574,7 @@ function choose_mode() {
 function choose_emulator() {
     local mode="$1"
     local default="$2"
+    local cancel="$3"
 
     local default
     local default_id
@@ -581,10 +594,10 @@ function choose_emulator() {
         ((i++))
     done < <(sort "$EMU_SYS_CONF")
     if [[ -z "${options[*]}" ]]; then
-        dialog --msgbox "No emulator options found for $SYSTEM - have you installed any snes emulators yet? Do you have a valid $EMU_SYS_CONF ?" 20 60 >/dev/tty
+        dialog --msgbox "No emulator options found for $SYSTEM - Do you have a valid $EMU_SYS_CONF ?" 20 60 >/dev/tty
         exit 1
     fi
-    local cmd=(dialog --default-item "$default_id" --menu "Choose default emulator"  22 76 16 )
+    local cmd=(dialog $cancel --default-item "$default_id" --menu "Choose default emulator"  22 76 16 )
     local choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
     [[ -z "$choice" ]] && return
 
@@ -677,6 +690,33 @@ function choose_fb_res() {
     load_mode_defaults
 }
 
+function user_menu() {
+    local default
+    local options=()
+    local script
+    local i=1
+    while read -r script; do
+        script="${script##*/}"
+        script="${script%.*}"
+        options+=($i "$script")
+        ((i++))
+    done < <(find "$CONFIGDIR/all/runcommand-menu" -type f -name "*.sh" | sort)
+    local default
+    local cmd
+    local choice
+    local ret
+    while true; do
+        cmd=(dialog --default-item "$default" --cancel-label "Back" --menu "Choose option"  22 76 16)
+        choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
+        [[ -z "$choice" ]] && return 0
+        default="$choice"
+        script="runcommand-menu/${options[choice*2-1]}.sh"
+        user_script "$script"
+        ret="$?"
+        [[ "$ret" -eq 1 || "$ret" -eq 2 ]] && return "$ret"
+    done
+}
+
 function switch_fb_res() {
     local res=(${1/x/ })
     local res_x="${res[0]}"
@@ -738,7 +778,7 @@ function config_dispmanx() {
 
 function retroarch_append_config() {
     # only for retroarch emulators
-    [[ ! "$COMMAND" =~ "retroarch" ]] && return
+    [[ "$EMULATOR" != lr-* ]] && return
 
     # make sure tmp folder exists for unpacking archives
     mkdir -p "/tmp/retroarch"
@@ -814,7 +854,7 @@ function get_sys_command() {
     if [[ -z "$emulator" ]]; then
         echo "No default emulator found for system $SYSTEM"
         start_joy2key
-        choose_emulator "emu_sys"
+        choose_emulator "emu_sys" "" "--nocancel"
         stop_joy2key
         get_sys_command "$SYSTEM" "$ROM"
         return
@@ -837,15 +877,15 @@ function get_sys_command() {
     COMMAND="$(default_emulator get emu_cmd)"
 
     # replace tokens
-    COMMAND="${COMMAND/\%ROM\%/\"$ROM\"}"
-    COMMAND="${COMMAND/\%BASENAME\%/\"$ROM_BN\"}"
+    COMMAND="${COMMAND//\%ROM\%/\"$ROM\"}"
+    COMMAND="${COMMAND//\%BASENAME\%/\"$ROM_BN\"}"
 
     # special case to get the last 2 folders for quake games for the -game parameter
     # remove everything up to /quake/
     local quake_dir="${ROM##*/quake/}"
     # remove filename
     quake_dir="${quake_dir%/*}"
-    COMMAND="${COMMAND/\%QUAKEDIR\%/\"$quake_dir\"}"
+    COMMAND="${COMMAND//\%QUAKEDIR\%/\"$quake_dir\"}"
 
     # if it starts with CON: it is a console application (so we don't redirect stdout later)
     if [[ "$COMMAND" == CON:* ]]; then
@@ -953,6 +993,8 @@ function restore_cursor_and_exit() {
 
 function launch_command() {
     local ret
+    # escape $ to avoid variable expansion (eg roms containing $!)
+    COMMAND="${COMMAND//\$/\\\$}"
     # launch the command
     echo -e "Parameters: $@\nExecuting: $COMMAND" >>"$LOG"
     if [[ "$CONSOLE_OUT" -eq 1 ]]; then
@@ -993,6 +1035,7 @@ function runcommand() {
 
     if [[ "$DISABLE_MENU" -ne 1 ]]; then
         if ! check_menu; then
+            user_script "runcommand-onend.sh"
             clear
             restore_cursor_and_exit 0
         fi
@@ -1029,7 +1072,7 @@ function runcommand() {
     # reset/restore framebuffer res (if it was changed)
     [[ -n "$FB_NEW" ]] && restore_fb
 
-    [[ "$COMMAND" =~ retroarch ]] && retroarchIncludeToEnd "$CONF_ROOT/retroarch.cfg"
+    [[ "$EMULATOR" == lr-* ]] && retroarchIncludeToEnd "$CONF_ROOT/retroarch.cfg"
 
     user_script "runcommand-onend.sh"
 

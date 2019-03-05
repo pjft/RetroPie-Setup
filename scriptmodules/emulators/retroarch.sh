@@ -18,8 +18,19 @@ function depends_retroarch() {
     local depends=(libudev-dev libxkbcommon-dev libsdl2-dev libasound2-dev libusb-1.0-0-dev)
     isPlatform "rpi" && depends+=(libraspberrypi-dev)
     isPlatform "mali" && depends+=(mali-fbdev)
-    isPlatform "x86" && depends+=(nvidia-cg-toolkit)
-    isPlatform "x11" && depends+=(libpulse-dev libavcodec-dev libavformat-dev libavdevice-dev)
+    isPlatform "x11" && depends+=(libx11-xcb-dev libpulse-dev libvulkan-dev)
+    isPlatform "vero4k" && depends+=(vero3-userland-dev-osmc zlib1g-dev libfreetype6-dev)
+
+    if compareVersions "$__os_debian_ver" ge 9; then
+        depends+=(libavcodec-dev libavformat-dev libavdevice-dev)
+    fi
+
+    # only install nvidia-cg-toolkit if it is available (as the non-free repo may not be enabled)
+    if isPlatform "x86"; then
+        if [[ -n "$(apt-cache search --names-only nvidia-cg-toolkit)" ]]; then
+            depends+=(nvidia-cg-toolkit)
+        fi
+    fi
 
     getDepends "${depends[@]}"
 
@@ -27,23 +38,26 @@ function depends_retroarch() {
 }
 
 function sources_retroarch() {
-    gitPullOrClone "$md_build" https://github.com/libretro/RetroArch.git v1.5.0
-    if isPlatform "mali"; then
-        sed -i 's|struct mali_native_window native_window|fbdev_window native_window|' gfx/drivers_context/mali_fbdev_ctx.c
-    fi
+    gitPullOrClone "$md_build" https://github.com/libretro/RetroArch.git v1.7.6
     applyPatch "$md_data/01_hotkey_hack.diff"
     applyPatch "$md_data/02_disable_search.diff"
+    applyPatch "$md_data/03_disable_udev_sort.diff"
 }
 
 function build_retroarch() {
-    local params=(--enable-sdl2)
-    ! isPlatform "x11" && params+=(--disable-x11 --enable-opengles --disable-ffmpeg --disable-sdl --enable-sdl2 --disable-oss --disable-pulse --disable-al --disable-jack)
+    local params=(--disable-sdl --enable-sdl2 --disable-oss --disable-al --disable-jack --disable-qt)
+    ! isPlatform "x11" && params+=(--disable-x11 --disable-pulse)
+    if compareVersions "$__os_debian_ver" lt 9; then
+        params+=(--disable-ffmpeg)
+    fi
+    isPlatform "gles" && params+=(--enable-opengles)
     isPlatform "rpi" && params+=(--enable-dispmanx)
     isPlatform "mali" && params+=(--enable-mali_fbdev)
-    if isPlatform "arm"; then
-        params+=(--enable-floathard)
-        isPlatform "neon" && params+=(--enable-neon)
-    fi
+    isPlatform "kms" && params+=(--enable-kms)
+    isPlatform "arm" && params+=(--enable-floathard)
+    isPlatform "neon" && params+=(--enable-neon)
+    isPlatform "x11" && params+=(--enable-vulkan)
+    isPlatform "vero4k" && params+=(--enable-mali_fbdev --with-opengles_libs='-L/opt/vero3/lib')
     ./configure --prefix="$md_inst" "${params[@]}"
     make clean
     make
@@ -83,11 +97,26 @@ function update_assets_retroarch() {
     chown -R $user:$user "$dir"
 }
 
+function install_xmb_monochrome_assets_retroarch() {
+    local dir="$configdir/all/retroarch/assets"
+    [[ -d "$dir/.git" ]] && return
+    [[ ! -d "$dir" ]] && mkUserDir "$dir"
+    downloadAndExtract "$__archive_url/retroarch-xmb-monochrome.tar.gz" "$dir"
+    chown -R $user:$user "$dir"
+}
+
+function _package_xmb_monochrome_assets_retroarch() {
+    gitPullOrClone "$md_build/assets" https://github.com/libretro/retroarch-assets.git
+    mkdir -p "$__tmpdir/archives"
+    local archive="$__tmpdir/archives/retroarch-xmb-monochrome.tar.gz"
+    rm -f "$archive"
+    tar cvzf "$archive" -C "$md_build/assets" xmb/monochrome
+}
+
 function configure_retroarch() {
     [[ "$md_mode" == "remove" ]] && return
 
     # move / symlink the retroarch configuration
-    mkUserDir "$home/.config"
     moveConfigDir "$home/.config/retroarch" "$configdir/all/retroarch"
 
     # move / symlink our old retroarch-joypads folder
@@ -101,9 +130,16 @@ function configure_retroarch() {
     # install shaders by default
     update_shaders_retroarch
 
+    # install minimal assets
+    install_xmb_monochrome_assets_retroarch
+
     local config="$(mktemp)"
 
     cp "$md_inst/retroarch.cfg" "$config"
+
+    # query ES A/B key swap configuration
+    local es_swap="false"
+    getAutoConf "es_swap_a_b" && es_swap="true"
 
     # configure default options
     iniConfig " = " '"' "$config"
@@ -112,7 +148,12 @@ function configure_retroarch() {
     iniSet "config_save_on_exit" "false"
     iniSet "video_aspect_ratio_auto" "true"
     iniSet "video_smooth" "false"
-    iniSet "video_threaded" "true"
+    iniSet "rgui_show_start_screen" "false"
+
+    if ! isPlatform "x86"; then
+        iniSet "video_threaded" "true"
+    fi
+
     iniSet "video_font_size" "12"
     iniSet "core_options_path" "$configdir/all/retroarch-core-options.cfg"
     isPlatform "x11" && iniSet "video_fullscreen" "true"
@@ -163,6 +204,22 @@ function configure_retroarch() {
     # rgui by default
     iniSet "menu_driver" "rgui"
 
+    # hide online updater menu options
+    iniSet "menu_show_core_updater" "false"
+    iniSet "menu_show_online_updater" "false"
+
+    # disable unnecessary xmb menu tabs
+    iniSet "xmb_show_add" "false"
+    iniSet "xmb_show_history" "false"
+    iniSet "xmb_show_images" "false"
+    iniSet "xmb_show_music" "false"
+
+    # disable xmb menu driver icon shadows
+    iniSet "xmb_shadows_enable" "false"
+
+    # swap A/B buttons based on ES configuration
+    iniSet "menu_swap_ok_cancel_buttons" "$es_swap"
+
     copyDefaultConfig "$config" "$configdir/all/retroarch.cfg"
     rm "$config"
 
@@ -196,11 +253,11 @@ function keyboard_retroarch() {
         ((i++))
     done < <(grep "^[[:space:]]*input_player[0-9]_[a-z]*" "$configdir/all/retroarch.cfg")
     local cmd=(dialog --backtitle "$__backtitle" --form "RetroArch keyboard configuration" 22 48 16)
-    local choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
-    if [[ -n "$choices" ]]; then
+    local choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
+    if [[ -n "$choice" ]]; then
         local value
         local values
-        readarray -t values <<<"$choices"
+        readarray -t values <<<"$choice"
         iniConfig " = " "" "$configdir/all/retroarch.cfg"
         i=0
         for value in "${values[@]}"; do
@@ -212,13 +269,13 @@ function keyboard_retroarch() {
 
 function hotkey_retroarch() {
     iniConfig " = " '"' "$configdir/all/retroarch.cfg"
-    cmd=(dialog --backtitle "$__backtitle" --menu "Choose the desired hotkey behaviour." 22 76 16)
-    options=(1 "Hotkeys enabled. (default)"
+    local cmd=(dialog --backtitle "$__backtitle" --menu "Choose the desired hotkey behaviour." 22 76 16)
+    local options=(1 "Hotkeys enabled. (default)"
              2 "Press ALT to enable hotkeys."
              3 "Hotkeys disabled. Press ESCAPE to open RGUI.")
-    choices=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
-    if [[ -n "$choices" ]]; then
-        case $choices in
+    local choice=$("${cmd[@]}" "${options[@]}" 2>&1 >/dev/tty)
+    if [[ -n "$choice" ]]; then
+        case "$choice" in
             1)
                 iniSet "input_enable_hotkey" "nul"
                 iniSet "input_exit_emulator" "escape"
@@ -274,6 +331,7 @@ function gui_retroarch() {
                         ;;
                     2)
                         rm -rf "$configdir/all/retroarch/$dir"
+                        [[ "$dir" == "assets" ]] && install_xmb_monochrome_assets_retroarch
                         ;;
                     *)
                         continue

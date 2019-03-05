@@ -13,7 +13,7 @@ rp_module_id="zdoom"
 rp_module_desc="ZDoom - Enhanced port of the official DOOM source"
 rp_module_licence="OTHER https://raw.githubusercontent.com/RetroPie/zdoom/master/docs/licenses/README.TXT"
 rp_module_section="opt"
-rp_module_flags="dispmanx !mali"
+rp_module_flags=""
 
 function depends_zdoom() {
     local depends=(
@@ -46,13 +46,12 @@ function install_zdoom() {
 }
 
 function add_games_zdoom() {
-    _add_games_lr-prboom "$md_inst/zdoom +set fullscreen 1 -iwad %ROM%"
+    _add_games_lr-prboom "DOOMWADDIR=$romdir/ports/doom $md_inst/zdoom +set fullscreen 1 -iwad %ROM%"
 }
 
 function configure_zdoom() {
     mkRomDir "ports/doom"
 
-    mkUserDir "$home/.config"
     moveConfigDir "$home/.config/zdoom" "$md_conf_root/doom"
 
     [[ "$md_mode" == "install" ]] && game_data_lr-prboom

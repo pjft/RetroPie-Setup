@@ -14,8 +14,8 @@ rp_module_desc="Generate mkdocs documentation from wiki"
 rp_module_section=""
 
 function depends_wikidocs() {
-    getDepends python3 python3-pip
-    pip3 install --upgrade mkdocs mkdocs-material
+    getDepends python3 python3-pip libyaml-dev
+    pip3 install --upgrade mkdocs mkdocs-material mdx_truly_sane_lists
 }
 
 function sources_wikidocs() {
@@ -38,4 +38,3 @@ function install_wikidocs() {
 function upload_wikidocs() {
     rsync -av --delete "$__tmpdir/wikidocs/" "retropie@$__binary_host:docs/"
 }
-

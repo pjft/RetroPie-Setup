@@ -38,9 +38,7 @@ function game_data_lr-tyrquake() {
     if [[ ! -f "$romdir/ports/quake/id1/pak0.pak" ]]; then
         cd "$__tmpdir"
         # download / unpack / install quake shareware files
-        wget "$__archive_url/quake106.zip" -O quake106.zip
-        unzip -o quake106.zip -d "quake106"
-        rm quake106.zip
+        downloadAndExtract "$__archive_url/quake106.zip" "$__tmpdir/quake106"
         pushd quake106
         lhasa ef resource.1
         cp -rf id1 "$romdir/ports/quake/"
@@ -55,8 +53,9 @@ function _add_games_lr-tyrquake() {
     local cmd="$1"
     declare -A games=(
         ['id1']="Quake"
-        ['id1/hipnotic']="Quake Mission Pack 1 (hipnotic)"
-        ['id1/rogue']="Quake Mission Pack 2 (rogue)"
+        ['hipnotic']="Quake Mission Pack 1 (hipnotic)"
+        ['rogue']="Quake Mission Pack 2 (rogue)"
+        ['dopa']="Quake Episode 5 (dopa)"
     )
     local dir
     local pak
