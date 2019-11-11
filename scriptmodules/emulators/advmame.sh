@@ -14,7 +14,7 @@ rp_module_desc="AdvanceMAME v3.9"
 rp_module_help="ROM Extension: .zip\n\nCopy your AdvanceMAME roms to either $romdir/mame-advmame or\n$romdir/arcade"
 rp_module_licence="GPL2 https://raw.githubusercontent.com/amadvance/advancemame/master/COPYING"
 rp_module_section="opt"
-rp_module_flags="!mali !kms"
+rp_module_flags="!mali"
 
 function _update_hook_advmame() {
     # if the non split advmame is installed, make directories for 0.94 / 1.4 so they will be updated
@@ -26,8 +26,7 @@ function _update_hook_advmame() {
 }
 
 function depends_advmame() {
-    local depends=(libsdl1.2-dev autoconf automake)
-    isPlatform "x11" && depends+=(libsdl2-dev)
+    local depends=(libsdl2-dev autoconf automake)
     isPlatform "rpi" && depends+=(libraspberrypi-dev)
     getDepends "${depends[@]}"
 }
@@ -38,7 +37,9 @@ function sources_advmame() {
 
 function build_advmame() {
     ./autogen.sh
-    ./configure CFLAGS="$CFLAGS -fno-stack-protector" --prefix="$md_inst"
+    local params=()
+    isPlatform "mesa" && params+=(--disable-vc)
+    ./configure CFLAGS="$CFLAGS -fno-stack-protector" --prefix="$md_inst" "${params[@]}"
     make clean
     make
     md_ret_require="$md_build/advmame"
@@ -96,12 +97,19 @@ function configure_advmame() {
         iniSet "dir_snap" "$romdir/mame-advmame/snap"
         iniSet "dir_sta" "$romdir/mame-advmame/nvram"
 
-        if isPlatform "rpi"; then
+        if isPlatform "kms"; then
+            iniSet "device_video" "sdl"
+            iniSet "device_keyboard" "sdl"
+            iniSet "display_vsync" "yes"
+        elif isPlatform "rpi"; then
             iniSet "device_video" "fb"
-            iniSet "device_video_cursor" "off"
             iniSet "device_keyboard" "raw"
-            iniSet "device_sound" "alsa"
             iniSet "display_vsync" "no"
+        fi
+
+        if isPlatform "rpi"; then
+            iniSet "device_video_cursor" "off"
+            iniSet "device_sound" "alsa"
             iniSet "sound_normalize" "no"
             iniSet "display_resizeeffect" "none"
             iniSet "display_resize" "integer"
