@@ -35,7 +35,7 @@ function rps_logInit() {
 function rps_logStart() {
     echo -e "Log started at: $(date -d @$time_start)\n"
     echo "RetroPie-Setup version: $__version ($(git -C "$scriptdir" log -1 --pretty=format:%h))"
-    echo "System: $(uname -a)"
+    echo "System: $__os_desc - $(uname -a)"
 }
 
 function rps_logEnd() {
@@ -68,13 +68,12 @@ function depends_setup() {
         exec "$scriptdir/retropie_packages.sh" setup post_update gui_setup
     fi
 
-    if isPlatform "rpi" && isPlatform "mesa"; then
-        printMsgs "dialog" "ERROR: You have the experimental desktop GL driver enabled. This is NOT compatible with RetroPie, and Emulation Station as well as emulators will fail to launch.\n\nPlease disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
-        exit 1
+    if isPlatform "rpi" && isPlatform "mesa" && ! isPlatform "rpi4"; then
+        printMsgs "dialog" "WARNING: You have the experimental desktop GL driver enabled. This is NOT supported by RetroPie, and Emulation Station as well as emulators may fail to launch.\n\nPlease disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
     fi
 
-    if isPlatform "rpi" && [[ "$__os_debian_ver" -eq 8 ]]; then
-        printMsgs "dialog" "Raspbian Jessie is no longer supported by the Raspberry Pi Foundation and compatibility with RetroPie-Setup will be dropped in the near future.\n\nBinary packages for RetroPie will also not be updated further.\n\nPlease install RetroPie 4.4 or newer from a fresh image which is based on Raspbian Stretch.\n\nIt is possible to upgrade a Jessie install to Stretch but we recommend a fresh install.\n\n"
+    if [[ "$__os_debian_ver" -eq 8 ]]; then
+        printMsgs "dialog" "Raspbian/Debian Jessie and versions of Ubuntu below 16.04 are no longer supported.\n\nPlease install RetroPie 4.4 or newer from a fresh image which is based on Raspbian Stretch (or if running Ubuntu, upgrade your OS)."
     fi
 
     # make sure user has the correct group permissions
@@ -421,7 +420,7 @@ function update_packages_gui_setup() {
     rps_logInit
     {
         rps_logStart
-        [[ "$update_os" -eq 1 ]] && apt_upgrade_raspbiantools
+        [[ "$update_os" -eq 1 ]] && rp_callModule raspbiantools apt_upgrade
         update_packages_setup
         rps_logEnd
     } &> >(_setup_gzip_log "$logfilename")
@@ -501,7 +500,7 @@ function gui_setup() {
     while true; do
         local commit=$(git -C "$scriptdir" log -1 --pretty=format:"%cr (%h)")
 
-        cmd=(dialog --backtitle "$__backtitle" --title "RetroPie-Setup Script" --cancel-label "Exit" --item-help --help-button --default-item "$default" --menu "Version: $__version\nLast Commit: $commit" 22 76 16)
+        cmd=(dialog --backtitle "$__backtitle" --title "RetroPie-Setup Script" --cancel-label "Exit" --item-help --help-button --default-item "$default" --menu "Version: $__version (running on $__os_desc)\nLast Commit: $commit" 22 76 16)
         options=(
             I "Basic install" "I This will install all packages from Core and Main which gives a basic RetroPie install. Further packages can then be installed later from the Optional and Experimental sections. If binaries are available they will be used, alternatively packages will be built from source - which will take longer."
 

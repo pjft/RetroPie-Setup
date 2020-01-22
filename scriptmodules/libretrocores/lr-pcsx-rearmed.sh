@@ -13,7 +13,7 @@ rp_module_id="lr-pcsx-rearmed"
 rp_module_desc="Playstation emulator - PCSX (arm optimised) port for libretro"
 rp_module_help="ROM Extensions: .bin .cue .cbn .img .iso .m3u .mdf .pbp .toc .z .znx\n\nCopy your PSX roms to $romdir/psx\n\nCopy the required BIOS file SCPH1001.BIN to $biosdir"
 rp_module_licence="GPL2 https://raw.githubusercontent.com/libretro/pcsx_rearmed/master/COPYING"
-rp_module_section="main"
+rp_module_section="opt arm=main"
 
 function depends_lr-pcsx-rearmed() {
     local depends=(libpng-dev)
@@ -26,14 +26,20 @@ function sources_lr-pcsx-rearmed() {
 }
 
 function build_lr-pcsx-rearmed() {
-    if isPlatform "neon"; then
-        ./configure --platform=libretro --enable-neon
-    else
-        ./configure --platform=libretro --disable-neon
+    local params=()
+
+    if isPlatform "arm"; then
+        params+=(ARCH=arm USE_DYNAREC=1)
+        if isPlatform "neon"; then
+            params+=(HAVE_NEON=1 BUILTIN_GPU=neon)
+        else
+            params+=(HAVE_NEON=0 BUILTIN_GPU=peops)
+        fi
     fi
-    make clean
-    make
-    md_ret_require="$md_build/libretro.so"
+
+    make -f Makefile.libretro "${params[@]}" clean
+    make -f Makefile.libretro "${params[@]}"
+    md_ret_require="$md_build/pcsx_rearmed_libretro.so"
 }
 
 function install_lr-pcsx-rearmed() {
@@ -41,7 +47,7 @@ function install_lr-pcsx-rearmed() {
         'AUTHORS'
         'ChangeLog.df'
         'COPYING'
-        'libretro.so'
+        'pcsx_rearmed_libretro.so'
         'NEWS'
         'README.md'
         'readme.txt'
@@ -52,6 +58,6 @@ function configure_lr-pcsx-rearmed() {
     mkRomDir "psx"
     ensureSystemretroconfig "psx"
 
-    addEmulator 1 "$md_id" "psx" "$md_inst/libretro.so"
+    addEmulator 1 "$md_id" "psx" "$md_inst/pcsx_rearmed_libretro.so"
     addSystem "psx"
 }

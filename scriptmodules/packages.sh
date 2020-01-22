@@ -10,15 +10,6 @@
 #
 
 declare -A __mod_id_to_idx
-__mod_idx=()
-__mod_id=()
-__mod_type=()
-__mod_desc=()
-__mod_help=()
-__mod_licence=()
-__mod_section=()
-__mod_flags=()
-
 declare -A __sections
 __sections[core]="core"
 __sections[main]="main"
@@ -310,7 +301,7 @@ function rp_hasBinary() {
     # threaded C++ apps on Raspbian (armv6 userland)
     if [[ "$__os_id" != "Raspbian" ]] && ! isPlatform "armv6"; then
         case "$id" in
-            emulationstation|zdoom|lr-dinothawr|lr-ppsspp|ppsspp)
+            emulationstation|lzdoom|lr-dinothawr|lr-ppsspp|ppsspp)
                 return 1
                 ;;
         esac
@@ -345,7 +336,7 @@ function rp_createBin() {
     fi
 
     local archive="$md_id.tar.gz"
-    local dest="$__tmpdir/archives/$__os_codename/$__platform/$md_type"
+    local dest="$__tmpdir/archives/$__binary_path/$md_type"
     rm -f "$dest/$archive"
     mkdir -p "$dest"
     tar cvzf "$dest/$archive" -C "$rootdir/$md_type" "$md_id"
@@ -393,11 +384,26 @@ function rp_registerModule() {
     local flag
     local valid=1
 
-    for flag in "${flags[@]}"; do
-        if [[ "$flag" =~ ^\!(.+) ]] && isPlatform "${BASH_REMATCH[1]}"; then
-            valid=0
-            break
-        fi
+    if [[ "$__ignore_flags" -ne 1 ]]; then
+        for flag in "${flags[@]}"; do
+            if [[ "$flag" =~ ^\!(.+) ]] && isPlatform "${BASH_REMATCH[1]}"; then
+                valid=0
+                break
+            fi
+        done
+    fi
+
+    local sections=($rp_module_section)
+    # get default section
+    rp_module_section="${sections[0]}"
+
+    # loop through any additional flag=section parameters
+    local flag section
+    for section in "${sections[@]:1}"; do
+        section=(${section/=/ })
+        flag="${section[0]}"
+        section="${section[1]}"
+        isPlatform "$flag" && rp_module_section="$section"
     done
 
     if [[ "$valid" -eq 1 ]]; then
@@ -425,6 +431,15 @@ function rp_registerModuleDir() {
 }
 
 function rp_registerAllModules() {
+    __mod_idx=()
+    __mod_id=()
+    __mod_type=()
+    __mod_desc=()
+    __mod_help=()
+    __mod_licence=()
+    __mod_section=()
+    __mod_flags=()
+
     rp_registerModuleDir 100 "emulators"
     rp_registerModuleDir 200 "libretrocores"
     rp_registerModuleDir 300 "ports"

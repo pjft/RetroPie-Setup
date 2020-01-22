@@ -40,7 +40,7 @@ function module_builder() {
         ! fnExists "install_${md_id}" && continue
 
         # skip already built archives, so we can retry failed modules
-        [[ -f "$__tmpdir/archives/$__os_codename/$__platform/${__mod_type[md_idx]}/$md_id.tar.gz" ]] && continue
+        [[ -f "$__tmpdir/archives/$__binary_path/${__mod_type[md_idx]}/$md_id.tar.gz" ]] && continue
 
         # build, install and create binary archive.
         # initial clean in case anything was in the build folder when calling
@@ -61,7 +61,7 @@ function section_builder() {
 }
 
 function upload_builder() {
-    rsync -av --progress --delay-updates "$__tmpdir/archives/" "retropie@$__binary_host:files/binaries/"
+    adminRsync "$__tmpdir/archives/" "files/binaries/"
 }
 
 function clean_archives_builder() {
@@ -73,45 +73,49 @@ function chroot_build_builder() {
     mkdir -p "$md_build"
 
     # get current host ip for the distcc in the emulated chroot to connect to
-    local ip="$(ip route get 8.8.8.8 2>/dev/null | awk '{print $NF; exit}')"
+    local ip="$(getIPAddress)"
 
     local dist
-    local sys
+    local dists="$__builder_dists"
+    [[ -z "$dists" ]] && dists="stretch buster"
 
-    for dist in stretch; do
-        local use_distcc=0
+    local platform
+    local platforms="$__builder_platforms"
+    [[ -z "$platforms" ]] && platforms="rpi1 rpi2 rpi4"
+
+    for dist in $dists; do
+        local distcc_hosts="$__builder_distcc_hosts"
         if [[ -d "$rootdir/admin/crosscomp/$dist" ]]; then
-            use_distcc=1
             rp_callModule crosscomp switch_distcc "$dist"
+            [[ -z "$distcc_hosts" ]] && distcc_hosts="$ip"
         fi
 
-        if [[ ! -d "$md_build/$dist" ]]; then
-            rp_callModule image create_chroot "$dist" "$md_build/$dist"
-            git clone "$HOME/RetroPie-Setup" "$md_build/$dist/home/pi/RetroPie-Setup"
-            cat > "$md_build/$dist/home/pi/install.sh" <<_EOF_
-#!/bin/bash
-cd
-sudo apt-get update
-sudo apt-get install -y git
-if [[ "$use_distcc" -eq 1 ]]; then
-    sudo apt-get install -y distcc
-    sudo sed -i s/\+zeroconf/$ip/ /etc/distcc/hosts;
-fi
-_EOF_
-            rp_callModule image chroot "$md_build/$dist" bash /home/pi/install.sh
+        local makeflags="$__builder_makeflags"
+        [[ -z "$makeflags" ]] && makeflags="-j$(nproc)"
+
+        [[ ! -d "$md_build/$dist" ]] && rp_callModule image create_chroot "$dist" "$md_build/$dist"
+        if [[ ! -d "$md_build/$dist/home/pi/RetroPie-Setup" ]]; then
+            sudo -u $user git clone "$home/RetroPie-Setup" "$md_build/$dist/home/pi/RetroPie-Setup"
+            rp_callModule image chroot "$md_build/$dist" bash -c "sudo apt-get update; sudo apt-get install -y git"
         else
-            git -C "$md_build/$dist/home/pi/RetroPie-Setup" pull
+            sudo -u $user git -C "$md_build/$dist/home/pi/RetroPie-Setup" pull
         fi
 
-        for sys in rpi1 rpi2; do
+        for platform in $platforms; do
+            if [[ "$dist" == "stretch" && "$platform" == "rpi4" ]]; then
+                printMsgs "heading" "Skipping platform $platform on $dist ..."
+                continue
+            fi
+
             rp_callModule image chroot "$md_build/$dist" \
                 sudo \
-                PATH="/usr/lib/distcc:$PATH" \
-                MAKEFLAGS="-j4 PATH=/usr/lib/distcc:$PATH" \
-                __platform="$sys" \
+                MAKEFLAGS="$makeflags" \
+                DISTCC_HOSTS="$distcc_hosts" \
+                __platform="$platform" \
+                __has_binaries="$__chroot_has_binaries" \
                 /home/pi/RetroPie-Setup/retropie_packages.sh builder "$@"
         done
 
-        rsync -av "$md_build/$dist/home/pi/RetroPie-Setup/tmp/archives/" "$HOME/RetroPie-Setup/tmp/archives/"
+        rsync -av "$md_build/$dist/home/pi/RetroPie-Setup/tmp/archives/" "$home/RetroPie-Setup/tmp/archives/"
     done
 }

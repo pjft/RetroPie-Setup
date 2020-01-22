@@ -125,10 +125,12 @@ function depends_emulationstation() {
     local depends=(
         libfreeimage-dev libfreetype6-dev
         libcurl4-openssl-dev libasound2-dev cmake libsdl2-dev libsm-dev
-        libvlc-dev libvlccore-dev vlc rapidjson-dev
+        libvlc-dev libvlccore-dev vlc
     )
 
+    compareVersions "$__os_debian_ver" gt 8 && depends+=(rapidjson-dev)
     isPlatform "x11" && depends+=(gnome-terminal)
+    isPlatform "rpi" && depends+=(omxplayer)
     getDepends "${depends[@]}"
 }
 
@@ -136,13 +138,23 @@ function sources_emulationstation() {
     local repo="$1"
     local branch="$2"
     [[ -z "$repo" ]] && repo="https://github.com/RetroPie/EmulationStation"
-    [[ -z "$branch" ]] && branch="stable"
+    if [[ -z "$branch" ]]; then
+        if compareVersions "$__os_debian_ver" gt 8; then
+            branch="stable"
+        else
+            branch="v2.7.6"
+        fi
+    fi
     gitPullOrClone "$md_build" "$repo" "$branch"
 }
 
 function build_emulationstation() {
+    local params=(-DFREETYPE_INCLUDE_DIRS=/usr/include/freetype2/)
+    # Temporary workaround until GLESv2 support is implemented
+    isPlatform "rpi" && isPlatform "mesa" && params+=(-DGL=On)
+    isPlatform "rpi" && params+=(-DRPI=On)
     rpSwap on 1000
-    cmake . -DFREETYPE_INCLUDE_DIRS=/usr/include/freetype2/
+    cmake . "${params[@]}"
     make clean
     make
     rpSwap off
@@ -156,9 +168,13 @@ function install_emulationstation() {
         'emulationstation.sh'
         'GAMELISTS.md'
         'README.md'
-        'resources'
         'THEMES.md'
     )
+
+    # This folder is present only from 2.8.x, don't include it for older releases
+    if compareVersions "$__os_debian_ver" gt 8; then
+        md_ret_files+=('resources')
+    fi
 }
 
 function init_input_emulationstation() {
@@ -198,11 +214,6 @@ function install_launch_emulationstation() {
 
 if [[ \$(id -u) -eq 0 ]]; then
     echo "emulationstation should not be run as root. If you used 'sudo emulationstation' please run without sudo."
-    exit 1
-fi
-
-if [[ -d "/sys/module/vc4" ]]; then
-    echo -e "ERROR: You have the experimental desktop GL driver enabled. This is NOT compatible with RetroPie, and Emulation Station as well as emulators will fail to launch.\\n\\nPlease disable the experimental desktop GL driver from the raspi-config 'Advanced Options' menu."
     exit 1
 fi
 
@@ -263,7 +274,7 @@ function configure_emulationstation() {
     # move the $home/emulationstation configuration dir and symlink it
     moveConfigDir "$home/.emulationstation" "$configdir/all/emulationstation"
 
-    [[ "$mode" == "remove" ]] && return
+    [[ "$md_mode" == "remove" ]] && return
 
     # remove other emulation station if it's installed, so we don't end up with
     # both packages interfering - but leave configs alone so switching is easy

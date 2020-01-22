@@ -20,11 +20,19 @@ function setup_env() {
     __memory_phys=$(free -m | awk '/^Mem:/{print $2}')
     __memory_total=$(free -m -t | awk '/^Total:/{print $2}')
 
-    __has_binaries=0
+    # test if we are in a chroot
+    if [[ "$(stat -c %d:%i /)" != "$(stat -c %d:%i /proc/1/root/.)" ]]; then
+        [[ -z "$QEMU_CPU" && -n "$__qemu_cpu" ]] && export QEMU_CPU=$__qemu_cpu
+        __chroot=1
+    else
+        __chroot=0
+    fi
 
     get_platform
     get_os_version
     get_retropie_depends
+
+    [[ -z "$__has_binaries" ]] && __has_binaries=0
 
     __gcc_version=$(gcc -dumpversion)
 
@@ -36,7 +44,11 @@ function setup_env() {
 
     # set location of binary downloads
     __binary_host="files.retropie.org.uk"
-    [[ "$__has_binaries" -eq 1 ]] && __binary_url="https://$__binary_host/binaries/$__os_codename/$__platform"
+    __binary_base_url="https://$__binary_host/binaries"
+
+    __binary_path="$__os_codename/$__platform"
+    isPlatform "kms" && __binary_path+="/kms"
+    __binary_url="$__binary_base_url/$__binary_path"
 
     __archive_url="https://files.retropie.org.uk/archives"
 
@@ -47,6 +59,12 @@ function setup_env() {
     [[ -z "${CXXFLAGS}" ]] && export CXXFLAGS="${__default_cxxflags}"
     [[ -z "${ASFLAGS}" ]] && export ASFLAGS="${__default_asflags}"
     [[ -z "${MAKEFLAGS}" ]] && export MAKEFLAGS="${__default_makeflags}"
+
+    # if using distcc, add /usr/lib/distcc to PATH/MAKEFLAGS
+    if [[ -n "$DISTCC_HOSTS" ]]; then
+        PATH="/usr/lib/distcc:$PATH"
+        MAKEFLAGS+=" PATH=$PATH"
+    fi
 
     # test if we are in a chroot
     if [[ "$(stat -c %d:%i /)" != "$(stat -c %d:%i /proc/1/root/.)" ]]; then
@@ -67,22 +85,28 @@ function get_os_version() {
 
     # get os distributor id, description, release number and codename
     local os
-    mapfile -t os < <(lsb_release -sidrc)
+    # armbian uses a minimal shell script replacement for lsb_release with basic
+    # parameter parsing that requires the arguments split rather than using -sidrc
+    mapfile -t os < <(lsb_release -s -i -d -r -c)
     __os_id="${os[0]}"
     __os_desc="${os[1]}"
     __os_release="${os[2]}"
     __os_codename="${os[3]}"
-    
+
     local error=""
     case "$__os_id" in
         Raspbian|Debian)
+            # get major version (8 instead of 8.0 etc)
+            __os_debian_ver="${__os_release%%.*}"
+
             # Debian unstable is not officially supported though
             if [[ "$__os_release" == "unstable" ]]; then
-                __os_release=10
+                __os_debian_ver=11
             fi
 
-            if compareVersions "$__os_release" lt 8; then
-                error="You need Raspbian/Debian Jessie or newer"
+            # we still allow Raspbian 8 (jessie) to work (We show an popup in the setup module)
+            if compareVersions "$__os_debian_ver" lt 8; then
+                error="You need Raspbian/Debian Stretch or newer"
             fi
 
             # set a platform flag for osmc
@@ -95,13 +119,11 @@ function get_os_version() {
                 __platform_flags+=" xbian"
             fi
 
-            # we provide binaries for RPI on Raspbian < 10 only
-            if isPlatform "rpi" && compareVersions "$__os_release" lt 10; then
-                __has_binaries=1
+            # we provide binaries for RPI on Raspbian 9/10
+            if isPlatform "rpi" && compareVersions "$__os_debian_ver" gt 8 && compareVersions "$__os_debian_ver" lt 11; then
+               # only set __has_binaries if not already set
+               [[ -z "$__has_binaries" ]] && __has_binaries=1
             fi
-
-            # get major version (8 instead of 8.0 etc)
-            __os_debian_ver="${__os_release%%.*}"
             ;;
         Devuan)
             if isPlatform "rpi"; then
@@ -125,24 +147,35 @@ function get_os_version() {
             ;;
         LinuxMint)
             if [[ "$__os_desc" != LMDE* ]]; then
-                if compareVersions "$__os_release" lt 17; then
-                    error="You need Linux Mint 17 or newer"
-                elif compareVersions "$__os_release" lt 18; then
-                    __os_ubuntu_ver="14.04"
-                    __os_debian_ver="8"
+                if compareVersions "$__os_release" lt 18; then
+                    error="You need Linux Mint 18 or newer"
                 elif compareVersions "$__os_release" lt 19; then
                     __os_ubuntu_ver="16.04"
-                    __os_debian_ver="8"
+                    __os_debian_ver="9"
                 else
                     __os_ubuntu_ver="18.04"
-                    __os_debian_ver="9"
+                    __os_debian_ver="10"
                 fi
             fi
             ;;
-        Ubuntu)
-            if compareVersions "$__os_release" lt 14.04; then
-                error="You need Ubuntu 14.04 or newer"
-            elif compareVersions "$__os_release" lt 16.10; then
+        Ubuntu|neon)
+            if compareVersions "$__os_release" lt 16.04; then
+                error="You need Ubuntu 16.04 or newer"
+            # although ubuntu 16.10 reports as being based on stretch it is before some
+            # packages were changed - we map to version 8 to avoid issues (eg libpng-dev name)
+            elif compareVersions "$__os_release" eq 16.10; then
+                __os_debian_ver="8"
+            elif compareVersions "$__os_release" lt 18.04; then
+                __os_debian_ver="9"
+            else
+                __os_debian_ver="10"
+            fi
+            __os_ubuntu_ver="$__os_release"
+            ;;
+        Zorin)
+            if compareVersions "$__os_release" lt 14; then
+                error="You need Zorin OS 14 or newer"
+            elif compareVersions "$__os_release" lt 14; then
                 __os_debian_ver="8"
             else
                 __os_debian_ver="9"
@@ -156,28 +189,21 @@ function get_os_version() {
             __os_debian_ver="9"
             ;;
         elementary)
-            if compareVersions "$__os_release" lt 0.3; then
-                error="You need Elementary OS 0.3 or newer"
-            elif compareVersions "$__os_release" lt 0.4; then
-                __os_ubuntu_ver="14.04"
-            else
+            if compareVersions "$__os_release" lt 0.4; then
+                error="You need Elementary OS 0.4 or newer"
+            elif compareVersions "$__os_release" eq 0.4; then
                 __os_ubuntu_ver="16.04"
-            fi
-            __os_debian_ver="8"
-            ;;
-        neon)
-            __os_ubuntu_ver="$__os_release"
-            if compareVersions "$__os_release" lt 16.10; then
                 __os_debian_ver="8"
             else
-                __os_debian_ver="9"
+                __os_ubuntu_ver="18.04"
+                __os_debian_ver="10"
             fi
             ;;
         *)
             error="Unsupported OS"
             ;;
     esac
-    
+
     [[ -n "$error" ]] && fatalError "$error\n\n$(lsb_release -idrc)"
 
     # add 32bit/64bit to platform flags
@@ -189,6 +215,8 @@ function get_os_version() {
 
 function get_retropie_depends() {
     local depends=(git dialog wget gcc g++ build-essential unzip xmlstarlet python-pyudev ca-certificates)
+
+    [[ -n "$DISTCC_HOSTS" ]] && depends+=(distcc)
 
     if ! getDepends "${depends[@]}"; then
         fatalError "Unable to install packages required by $0 - ${md_ret_errors[@]}"
@@ -203,16 +231,22 @@ function get_retropie_depends() {
 function get_rpi_video() {
     local pkgconfig="/opt/vc/lib/pkgconfig"
 
+    if [[ -z "$__has_kms" && "$__chroot" -eq 1 ]]; then
+        # in chroot, use kms by default for rpi4 target
+        isPlatform "rpi4" && __has_kms=1
+    fi
+
     # detect driver via inserted module / platform driver setup
-    if [[ -d "/sys/module/vc4" ]]; then
+    if [[ -d "/sys/module/vc4" || "$__has_kms" -eq 1 ]]; then
         __platform_flags+=" mesa kms"
         [[ "$(ls -A /sys/bus/platform/drivers/vc4_firmware_kms/*.firmwarekms 2>/dev/null)" ]] && __platform_flags+=" dispmanx"
     else
         __platform_flags+=" videocore dispmanx"
     fi
 
-    # use our supplied fallback pkgconfig if necessary
-    [[ ! -d "$pkgconfig" ]] && pkgconfig="$scriptdir/pkgconfig"
+    # delete legacy pkgconfig that conflicts with Mesa (may be installed via rpi-update)
+    # see: https://github.com/raspberrypi/userland/pull/585
+    rm -rf $pkgconfig/{egl.pc,glesv2.pc,vg.pc}
 
     # set pkgconfig path for vendor libraries
     export PKG_CONFIG_PATH="$pkgconfig"
@@ -241,6 +275,9 @@ function get_platform() {
                         2)
                             __platform="rpi3"
                             ;;
+                        3)
+                            __platform="rpi4"
+                            ;;
                     esac
                 fi
                 ;;
@@ -259,7 +296,7 @@ function get_platform() {
             "Rockchip (Device Tree)")
                 __platform="tinker"
                 ;;
-            Vero4K)
+            Vero4K|Vero4KPlus)
                 __platform="vero4k"
                 ;;
             "Allwinner sun8i Family")
@@ -277,6 +314,14 @@ function get_platform() {
 
     if ! fnExists "platform_${__platform}"; then
         fatalError "Unknown platform - please manually set the __platform variable to one of the following: $(compgen -A function platform_ | cut -b10- | paste -s -d' ')"
+    fi
+
+    # check if we wish to target kms for platform
+    if [[ -z "$__has_kms" ]]; then
+        iniConfig " = " '"' "$configdir/all/retropie.cfg"
+        iniGet "force_kms"
+        [[ "$ini_value" == 1 ]] && __has_kms=1
+        [[ "$ini_value" == 0 ]] && __has_kms=0
     fi
 
     platform_${__platform}
@@ -309,6 +354,14 @@ function platform_rpi3() {
     __default_asflags=""
     __default_makeflags="-j2"
     __platform_flags="arm armv8 neon rpi gles"
+    __qemu_cpu=cortex-a53
+}
+
+function platform_rpi4() {
+    __default_cflags="-O2 -march=armv8-a+crc -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
+    __default_asflags=""
+    __default_makeflags="-j2"
+    __platform_flags="arm armv8 neon rpi gles gles3"
 }
 
 function platform_odroid-c1() {
@@ -354,7 +407,12 @@ function platform_x86() {
     __default_cflags="-O2 -march=native"
     __default_asflags=""
     __default_makeflags="-j$(nproc)"
-    __platform_flags="x11 gl"
+    __platform_flags="gl"
+    if [[ "$__has_kms" -eq 1 ]]; then
+        __platform_flags+=" kms"
+    else
+        __platform_flags+=" x11"
+    fi
 }
 
 function platform_generic-x11() {
@@ -379,9 +437,8 @@ function platform_imx6() {
 }
 
 function platform_vero4k() {
-    __default_cflags="-I/opt/vero3/include -L/opt/vero3/lib -O2 -march=armv8-a+crc -mtune=cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
+    __default_cflags="-I/opt/vero3/include -L/opt/vero3/lib -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
     __default_asflags=""
     __default_makeflags="-j4"
-    __platform_flags="arm armv8 neon vero4k gles"
+    __platform_flags="arm armv7 neon vero4k gles"
 }
-

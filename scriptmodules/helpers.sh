@@ -44,6 +44,7 @@ function printHeading() {
 function fatalError() {
     printHeading "Error"
     echo -e "$1"
+    joy2keyStop
     exit 1
 }
 
@@ -198,9 +199,13 @@ function getDepends() {
     # check whether to use our own sdl2 - can be disabled to resolve issues with
     # mixing custom 64bit sdl2 and os distributed i386 version on multiarch
     local own_sdl2=1
+    # default to off for x11 targets due to issues with dependencies with recent
+    # Ubuntu (19.04). eg libavdevice58 requiring exactly 2.0.9 sdl2.
+    isPlatform "x11" && own_sdl2=0
     iniConfig " = " '"' "$configdir/all/retropie.cfg"
     iniGet "own_sdl2"
-    [[ "$ini_value" == "0" ]] && own_sdl2=0
+    [[ "$ini_value" == 1 ]] && own_sdl2=1
+    [[ "$ini_value" == 0 ]] && own_sdl2=0
 
     for required in $@; do
 
@@ -227,7 +232,7 @@ function getDepends() {
 
         if [[ "$md_mode" == "install" ]]; then
             # make sure we have our sdl1 / sdl2 installed
-            if ! isPlatform "x11" && [[ "$required" == "libsdl1.2-dev" ]] && hasPackage libsdl1.2-dev $(get_pkg_ver_sdl1) "ne"; then
+            if ! isPlatform "x11" && ! isPlatform "mesa" && [[ "$required" == "libsdl1.2-dev" ]] && hasPackage libsdl1.2-dev $(get_pkg_ver_sdl1) "ne"; then
                 packages+=("$required")
                 continue
             fi
@@ -260,7 +265,7 @@ function getDepends() {
         # workaround to force installation of our fixed libsdl1.2 and custom compiled libsdl2
         local temp=()
         for required in ${packages[@]}; do
-            if isPlatform "rpi" && [[ "$required" == "libsdl1.2-dev" ]]; then
+            if [[ "$required" == "libsdl1.2-dev" ]]; then
                 if [[ "$__has_binaries" -eq 1 ]]; then
                     rp_callModule sdl1 install_bin
                 else
@@ -343,13 +348,22 @@ function rpSwap() {
 ## @param repo repository to clone or pull from
 ## @param branch branch to clone or pull from (optional)
 ## @param commit specific commit to checkout (optional - requires branch to be set)
+## @param depth depth parameter for git. (optional)
 ## @brief Git clones or pulls a repository.
+## @details depth parameter will default to 1 (shallow clone) so long as __persistent_repos isn't set.
+## A depth parameter of 0 will do a full clone with all history.
 function gitPullOrClone() {
     local dir="$1"
     local repo="$2"
     local branch="$3"
     [[ -z "$branch" ]] && branch="master"
     local commit="$4"
+    local depth="$5"
+    if [[ -z "$depth" && "$__persistent_repos" -ne 1 && -z "$commit" ]]; then
+        depth=1
+    else
+        depth=0
+    fi
 
     if [[ -d "$dir/.git" ]]; then
         pushd "$dir" > /dev/null
@@ -359,10 +373,10 @@ function gitPullOrClone() {
         popd > /dev/null
     else
         local git="git clone --recursive"
-        if [[ "$__persistent_repos" -ne 1 && "$repo" == *github* && -z "$commit" ]]; then
-            git+=" --depth 1"
+        if [[ "$depth" -gt 0 ]]; then
+            git+=" --depth $depth"
         fi
-        [[ "$branch" != "master" ]] && git+=" --branch $branch"
+        git+=" --branch $branch"
         printMsgs "console" "$git \"$repo\" \"$dir\""
         runCmd $git "$repo" "$dir"
     fi
@@ -591,7 +605,7 @@ function addUdevInputRules() {
 ## @details Set a dispmanx flag for a module as to whether it should use the
 ## sdl1 dispmanx backend by default or not (0 for framebuffer, 1 for dispmanx).
 function setDispmanx() {
-    isPlatform "rpi" || return
+    isPlatform "dispmanx" || return
     local mod_id="$1"
     local status="$2"
     iniConfig "=" "\"" "$configdir/all/dispmanx.cfg"
@@ -1033,7 +1047,7 @@ function joy2keyStart() {
 
     local params=("$@")
     if [[ "${#params[@]}" -eq 0 ]]; then
-        params=(kcub1 kcuf1 kcuu1 kcud1 0x0a 0x20)
+        params=(kcub1 kcuf1 kcuu1 kcud1 0x0a 0x20 0x1b)
     fi
 
     # get the first joystick device (if not already set)
@@ -1043,9 +1057,8 @@ function joy2keyStart() {
     [[ -z "$__joy2key_dev" ]] || pgrep -f joy2key.py >/dev/null && return 1
 
     # if joy2key.py is installed run it with cursor keys for axis/dpad, and enter + space for buttons 0 and 1
-    if "$scriptdir/scriptmodules/supplementary/runcommand/joy2key.py" "$__joy2key_dev" "${params[@]}" & 2>/dev/null; then
-        __joy2key_pid=$!
-        sleep 1
+    if "$scriptdir/scriptmodules/supplementary/runcommand/joy2key.py" "$__joy2key_dev" "${params[@]}" 2>/dev/null; then
+        __joy2key_pid=$(pgrep -f joy2key.py)
         return 0
     fi
 
@@ -1056,7 +1069,8 @@ function joy2keyStart() {
 ## @brief Stop previously started joy2key.py process.
 function joy2keyStop() {
     if [[ -n $__joy2key_pid ]]; then
-        kill -INT $__joy2key_pid 2>/dev/null
+        kill $__joy2key_pid 2>/dev/null
+        __joy2key_pid=""
         sleep 1
     fi
 }
@@ -1369,4 +1383,52 @@ function dkmsManager() {
             fi
             ;;
     esac
+}
+
+## @fn getIPAddress()
+## @param dev optional specific network device to use for address lookup
+## @brief Obtains the current externally routable source IP address of the machine
+## @details This function first tries to obtain an external IPv4 route and
+## otherwise tries an IPv6 route if the IPv4 route can not be determined.
+## If no external route can be determined, nothing will be returned.
+## This function uses Google's DNS servers as the external lookup address.
+function getIPAddress() {
+    local dev="$1"
+    local ip_route
+
+    # first try to obtain an external IPv4 route
+    ip_route=$(ip -4 route get 8.8.8.8 ${dev:+dev $dev} 2>/dev/null)
+    if [[ -z "$ip_route" ]]; then
+        # if there is no IPv4 route, try to obtain an IPv6 route instead
+        ip_route=$(ip -6 route get 2001:4860:4860::8888 ${dev:+dev $dev} 2>/dev/null)
+    fi
+
+    # if an external route was found, report its source address
+    [[ -n "$ip_route" ]] && grep -oP "src \K[^\s]+" <<< "$ip_route"
+}
+
+## @fn adminRsync()
+## @param src src folder on local system - eg "$__tmpdir/stats/"
+## @param dest destination folder on remote system - eg "stats/"
+## @param params additional rsync parameters - eg --delete
+## @brief Rsyncs data to remote host for admin modules
+## @details Used to rsync data to our server for admin modules. Default remote
+## user is retropie, host is $__binary_host and default port is 22. These can be overridden with
+## env vars __upload_user __upload_host and __upload_port
+##
+## The default parameters for rsync are "-av --delay-updates" - more can be added via the 3rd+ argument
+function adminRsync() {
+    local src="$1"
+    local dest="$2"
+    shift 2
+    local params=("$@")
+
+    local remote_user="$__upload_user"
+    [[ -z "$remote_user" ]] && remote_user="retropie"
+    local remote_host="$__upload_host"
+    [[ -z "$remote_host" ]] && remote_host="$__binary_host"
+    local remote_port="$__upload_port"
+    [[ -z "$remote_port" ]] && remote_port=22
+
+    rsync -av --delay-updates -e "ssh -p $remote_port" "${params[@]}" "$src" "$remote_user@$remote_host:$dest"
 }
