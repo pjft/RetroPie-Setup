@@ -16,13 +16,15 @@ rp_module_help="Copy data.zip from a purchased or Make and Play edition of VVVVV
 rp_module_section="exp"
 
 function depends_vvvvvv() {
-    getDepends cmake libsdl2-dev libsdl2-mixer-dev
+    local depends=(cmake libsdl2-dev libsdl2-mixer-dev)
+    isPlatform "kms" && depends+=(xorg)
+    getDepends "${depends[@]}"
 }
 
 function sources_vvvvvv() {
     gitPullOrClone "$md_build" https://github.com/TerryCavanagh/VVVVVV
     # default to fullscreen
-    sed -i "s/fullscreen = false/fullscreen = true/" "$md_build/desktop_version/src/Game.cpp"
+    ! isPlatform "kms" sed -i "s/fullscreen = false/fullscreen = true/" "$md_build/desktop_version/src/Game.cpp"
 }
 
 function build_vvvvvv() {
@@ -42,7 +44,9 @@ function install_vvvvvv() {
 }
 
 function configure_vvvvvv() {
-    addPort "$md_id" "vvvvvv" "VVVVVV" "$md_inst/VVVVVV"
+    local binary="$md_inst/VVVVVV"
+    isPlatform "kms" && binary="XINIT:$md_inst/VVVVVV"
+    addPort "$md_id" "vvvvvv" "VVVVVV" "$binary"
 
     [[ "$md_mode" != "install" ]] && return
 
